@@ -25,9 +25,10 @@ playwright-report/
 blob-report/
 .playwright/
 
-# Prisma
+# Prisma — the client is generated at install/build time, never committed
 prisma/*.db
 prisma/*.db-journal
+src/generated/
 
 # Tooling caches
 .eslintcache
