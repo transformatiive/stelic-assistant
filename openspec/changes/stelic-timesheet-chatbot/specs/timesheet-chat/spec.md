@@ -235,6 +235,18 @@ hours → description, one question per turn. Chips SHALL be offered wherever a 
 set exists, always with a free-text fallback. Answering a chip SHALL apply a typed slot value
 without a model round trip, and re-run resolution.
 
+A typed reply, while a draft is waiting on an answer, is not unambiguous the way a chip is: it
+may answer the pending question, correct a value already resolved elsewhere in the same draft
+("oh i meant Turner, not Clayco", "actually make it 6 hours"), or be unrelated to the draft
+entirely. A lightweight classification call SHALL decide which, given the pending question and
+every entry already in the draft — not the full sentence-extraction model, which has the
+harder job of splitting a whole freeform message into one or more entries, and which a typed
+reply to an open question does not need. Whichever slot the classifier names, the value it
+returns SHALL be the user's own words, re-resolved through the same deterministic matcher a
+chip's value goes through — a wrong classification can produce a wrong follow-up question, but
+never a wrong Zoho entry. A classification failure, or a decision that the reply is unrelated,
+SHALL degrade to ordinary full-sentence extraction, exactly as if no draft were pending.
+
 #### Scenario: Ordered questioning
 
 - **GIVEN** an entry missing project, hours and description
@@ -247,10 +259,30 @@ without a model round trip, and re-run resolution.
 - **THEN** `POST /api/chat/action` applies `{ slot: "project", value: <project id> }` directly
 - **AND** no LLM call is made for that turn
 
-#### Scenario: Free-text answer to a chip question
+#### Scenario: Free-text answer to the pending question
 
-- **WHEN** the user types an answer instead of tapping
-- **THEN** it is treated as the answer to the pending slot for that entry, not as a new entry
+- **GIVEN** a draft is waiting on an answer for the date
+- **WHEN** the user types "yesterday" instead of tapping anything
+- **THEN** it is treated as the answer to that slot for that entry, not as a new entry
+
+#### Scenario: Correcting a slot other than the one being asked about
+
+- **GIVEN** a draft has already resolved a project, and is now waiting on the date
+- **WHEN** the user types "oh i meant Turner, not Clayco"
+- **THEN** the project is re-resolved from "Turner", the date question is still asked, and no
+  new entry is created
+
+#### Scenario: A message unrelated to the pending draft
+
+- **GIVEN** a draft is waiting on an answer
+- **WHEN** the user's reply is about something else entirely
+- **THEN** the message is extracted as an ordinary new turn, exactly as if no draft were pending
+
+#### Scenario: The classifier is unavailable
+
+- **GIVEN** a draft is waiting on an answer
+- **WHEN** the continuation classification call fails
+- **THEN** the turn degrades to ordinary full-sentence extraction rather than failing outright
 
 ---
 

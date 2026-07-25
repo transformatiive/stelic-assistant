@@ -57,13 +57,6 @@ export type TranscriptAction =
   | { type: 'reply'; id: string; text: string; ui?: ChatUi }
   /** A chip was tapped: echo it, and kill the group it came from. */
   | { type: 'tap'; id: string; bubbleId: string; label: string }
-  /**
-   * Typed text answered a pending question (CHAT-7's free-text fallback) rather than starting
-   * a new turn. Same shape as `tap` — kill the question it answered, echo what was typed — but
-   * it also empties the composer and clears a stale error notice, because unlike a chip tap the
-   * text came out of the composer itself.
-   */
-  | { type: 'answer'; id: string; bubbleId: string; text: string }
   | { type: 'failed'; notice: Notice; restore?: string }
   | { type: 'clearNotice' }
   | { type: 'offline' }
@@ -120,20 +113,6 @@ export function transcriptReducer(
         busy: true,
       }
 
-    case 'answer':
-      return {
-        ...state,
-        bubbles: [
-          ...state.bubbles.map((bubble) =>
-            bubble.id === action.bubbleId ? { ...bubble, answered: true } : bubble,
-          ),
-          { id: action.id, role: 'user', text: action.text },
-        ],
-        draftText: '',
-        busy: true,
-        notice: state.notice?.kind === 'error' ? null : state.notice,
-      }
-
     case 'settle':
       return {
         ...state,
@@ -178,23 +157,6 @@ export function transcriptReducer(
     case 'closeWeek':
       return { ...state, weekOpen: false }
   }
-}
-
-/**
- * The question the composer's next send should answer, instead of starting a fresh turn
- * (CHAT-7's "free-text answer to a chip question" — and the same for the slots that have no
- * chips at all: date, hours, description).
- *
- * Found by *position* — the last bubble is an assistant question — not by its `answered` flag.
- * A failed `/api/chat/action` request marks the question answered and then, on `failed`, pops
- * its echo bubble back off (see below), which puts that same question back in last place with
- * a stale `answered: true` still on it. Position survives that; the flag alone would not, and
- * a retry would silently fall back to starting a new turn instead of answering the question
- * still on screen.
- */
-export function pendingQuestion(state: TranscriptState): Bubble | null {
-  const last = state.bubbles.at(-1)
-  return last && last.role === 'assistant' && last.ui?.kind === 'question' ? last : null
 }
 
 /** Can the user send right now? */

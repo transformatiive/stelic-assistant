@@ -12,6 +12,11 @@ import {
   type ChatMessage,
 } from '@/lib/extract/prompt'
 import { usageColumns } from '@/lib/extract/usage'
+import {
+  buildContinuationSystemPrompt,
+  type ContinuationClassifier,
+  type ContinuationDecision,
+} from './continuation'
 import { loadChargeCodes, loadProjectIndex } from '@/lib/index/store'
 import {
   resolveEntries,
@@ -25,8 +30,9 @@ import {
   loadPendingDraft,
   saveDraft,
   updateDraftEntries,
+  type StoredDraft,
 } from '@/lib/resolve/draft'
-import { nextQuestion } from '@/lib/resolve/slots'
+import { nextQuestion, type Question } from '@/lib/resolve/slots'
 import { warningsForDraft } from '@/lib/resolve/warnings'
 import { log } from '@/lib/observability/log'
 import { checkScope } from './scope'
@@ -39,16 +45,31 @@ import {
   type UndoCandidate,
 } from './ui'
 
+/** Used when no classifier is supplied — every reply is treated as a fresh message, exactly
+ * the behaviour before continuation classification existed. Tests that don't care about a
+ * pending draft can omit the parameter entirely. */
+const ALWAYS_NEW_MESSAGE: ContinuationClassifier = {
+  async classify() {
+    return { decision: { intent: 'new_message' }, usage: { modelRequested: 'none' } }
+  },
+}
+
 /**
  * One turn of the conversation (task 7.1, design §4).
  *
  * The order is deliberate and each step is cheap before the expensive one:
  *
- *   scope check → persist what they said → extract → **resolve deterministically** → respond
+ *   scope check → persist what they said → classify a pending draft → extract
+ *     → **resolve deterministically** → respond
  *
  * The scope check comes first because an out-of-scope question should cost nothing. Persisting
  * the user's message comes before the model call because a turn that fails should still leave
  * a record of what they typed — otherwise a degraded turn loses the thing they said.
+ *
+ * When a draft is already waiting on an answer, a small, cheap model call decides whether this
+ * reply belongs to it — answering the pending slot, or correcting any other value already in
+ * the draft — before the more expensive full-sentence extraction ever runs. Only a message the
+ * classifier calls unrelated (or a classifier failure) reaches the ordinary extraction path.
  *
  * **The model extracts; deterministic code decides.** Nothing the model returns becomes a
  * project, a date or a number of hours without going through the resolver, and nothing
@@ -85,6 +106,7 @@ export async function runChatTurn(
   db: PrismaClient,
   extractor: Extractor,
   input: ChatTurnInput,
+  classifier: ContinuationClassifier = ALWAYS_NEW_MESSAGE,
 ): Promise<ChatTurnResult> {
   const now = input.now ?? new Date()
   const conversationId = await openConversation(db, input.userId, now)
@@ -105,6 +127,30 @@ export async function runChatTurn(
   }
 
   const context = await buildContext(db, input, now)
+
+  // A draft is already waiting on an answer: let the classifier decide whether this reply
+  // belongs to it — answering the pending slot, or correcting any other value already in the
+  // draft — before treating it as a brand-new message (CHAT-7). This is what lets "oh i meant
+  // Turner" or "actually make it 6 hours" work as corrections rather than restarting the whole
+  // extraction from scratch.
+  const pendingDraft = await loadPendingDraft(db, input.userId, now)
+  const pendingQuestion = pendingDraft ? nextQuestion(pendingDraft.entries) : null
+  if (pendingDraft && pendingQuestion) {
+    const continued = await continueDraft(
+      db,
+      classifier,
+      conversationId,
+      userMessage.id,
+      pendingDraft,
+      pendingQuestion,
+      context,
+      input,
+      now,
+    )
+    if (continued) return continued
+    // The classifier said this is unrelated, or the classifier itself failed — either way,
+    // fall through and treat the message as a fresh one, exactly as before this existed.
+  }
 
   let extraction
   let usage: Usage | null = null
@@ -158,11 +204,71 @@ export async function runChatTurn(
 }
 
 /**
- * Answering one slot from a chip tap or a typed reply (task 7.2).
+ * Whether this turn's message answers or corrects the draft already waiting on one, and if so,
+ * applying it (CHAT-7).
  *
- * No model call: the value is already typed and the slot is already known, so a round trip
- * would add latency and cost for nothing. It also means chip taps keep working when the
- * gateway is down, which is the whole point of the guided form.
+ * Returns `null` when the classifier says the message is unrelated, or when the classifier
+ * itself fails — both mean "treat this as an ordinary fresh message", so the caller falls
+ * through to the ordinary extraction path rather than getting a special error turn out of a
+ * model that is not essential to answering at all (CHAT-13 applies here too).
+ *
+ * Every update still goes through `applyAnswer`, the exact same deterministic resolver a chip
+ * tap uses — the classifier only ever supplies the user's own words for a slot, never a
+ * resolved project id or calendar date, so a wrong classification can produce a wrong follow-up
+ * question but never a wrong Zoho entry.
+ */
+async function continueDraft(
+  db: PrismaClient,
+  classifier: ContinuationClassifier,
+  conversationId: string,
+  throughMessageId: string,
+  draft: StoredDraft,
+  question: Question,
+  context: ResolveContext,
+  input: ChatTurnInput,
+  now: Date,
+): Promise<ChatTurnResult | null> {
+  let decision: ContinuationDecision
+  let usage: Usage | null = null
+  try {
+    const result = await classifier.classify({
+      systemPrompt: buildContinuationSystemPrompt({
+        displayName: input.displayName,
+        today: todayFor(context),
+        timezone: input.timezone,
+        entries: draft.entries,
+        pending: { entryId: question.entryId, slot: question.slot },
+      }),
+      messages: await history(db, conversationId, throughMessageId),
+      userKey: input.userKey,
+    })
+    decision = result.decision
+    usage = result.usage
+  } catch (error) {
+    logExtractionFailure(error, classifyExtractionFailure(error))
+    return null
+  }
+
+  if (decision.intent === 'new_message') return null
+
+  const updated = decision.updates.reduce(
+    (entries, update) => applyAnswer(entries, update, context),
+    draft.entries,
+  )
+  await updateDraftEntries(db, draft.id, updated)
+
+  const { reply, ui } = present(draft.id, updated, null, input, context)
+  const assistant = await say(db, conversationId, 'assistant', reply, now, usage, ui)
+  return { conversationId, messageId: assistant.id, reply, ui }
+}
+
+/**
+ * Answering one slot from a chip tap (task 7.2).
+ *
+ * No model call: the value is a server-issued id and the slot is already known, so a round
+ * trip would add latency and cost for nothing. It also means chip taps keep working when the
+ * gateway is down, which is the whole point of the guided form. A typed reply, which is not
+ * unambiguous the way a chip is, goes through `runChatTurn`'s continuation classifier instead.
  */
 export type ChatActionInput = {
   userId: string

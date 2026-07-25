@@ -36,8 +36,9 @@ environment** — it does not call the vault at boot, on the hot path, or on tok
 
 | Name | Default | Notes |
 |---|---|---|
-| `OPENROUTER_MODEL` | `anthropic/claude-sonnet-5` | |
-| `OPENROUTER_FALLBACK_MODELS` | — | Comma-separated. |
+| `OPENROUTER_MODEL` | `anthropic/claude-sonnet-5` | Full-sentence extraction — splitting a message into entries. |
+| `OPENROUTER_CONTINUATION_MODEL` | `anthropic/claude-haiku-4.5` | Deciding whether a reply answers or corrects a draft already in progress — a short classification, cheaper and faster than the model above by design. |
+| `OPENROUTER_FALLBACK_MODELS` | — | Comma-separated. Applies to `OPENROUTER_MODEL` only. |
 | `SESSION_MAX_AGE_DAYS` | `30` | Sliding. |
 | `BACKDATE_WARN_DAYS` | `14` | A warning, never a block. |
 | `DEFAULT_BILL_STATUS` | `Billable` | Matches the portal's own default. |

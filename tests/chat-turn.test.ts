@@ -4,6 +4,10 @@ import type { Extractor, ExtractionResult } from '@/lib/extract/openrouter'
 import type { Extraction } from '@/lib/extract/schema'
 import { GatewayError } from '@/lib/extract/errors'
 import type { ChatUi } from '@/lib/chat/ui'
+import type {
+  ContinuationClassifier,
+  ContinuationDecision,
+} from '@/lib/chat/continuation'
 import { FakeDb } from './support/fake-db'
 
 const NOW = new Date('2026-07-22T16:00:00Z') // 12:00 Wednesday in New York
@@ -396,6 +400,209 @@ describe('reply_only intents', () => {
       kind: 'undo',
       candidates: [{ commitLogId: 'commit_ok', hours: 8 }],
     })
+  })
+})
+
+describe('continuing a draft that is waiting on an answer', () => {
+  function classifierReturning(decision: ContinuationDecision): ContinuationClassifier {
+    return {
+      async classify() {
+        return {
+          decision,
+          usage: { modelRequested: 'anthropic/claude-haiku-4.5', costUsd: 0.0001 },
+        }
+      },
+    }
+  }
+
+  function seedTurner(db: FakeDb) {
+    db.projectIndexes.push({
+      projectId: 'p_turner',
+      projectName: 'Turner Construction — Riverside Bridge',
+      projectIdString: 'p_turner',
+      crmDealId: null,
+      dealName: null,
+      accountName: 'Turner Construction',
+      aliases: ['turner'],
+      chargeCodes: [
+        {
+          taskId: 'task_turner',
+          taskName: 'Field Engineering',
+          tasklist: 'Stelic Services',
+        },
+      ],
+      refreshedAt: NOW,
+    })
+  }
+
+  async function draftAwaitingDate(db: FakeDb) {
+    seedIndex(db)
+    seedTurner(db)
+    await runChatTurn(
+      db.client,
+      extractorReturning({
+        kind: 'submit_time_entries',
+        reply: 'Which day?',
+        entries: [
+          {
+            project_query: 'clayco',
+            date_expression: null,
+            hours: 8,
+            description: 'Structural review',
+            billable: null,
+            charge_code_hint: null,
+          },
+        ],
+      }),
+      { ...turnInput, message: '8h clayco, structural review' },
+    )
+    return db.drafts[0]!.id
+  }
+
+  it('answers the pending slot without ever calling the full extractor', async () => {
+    const db = new FakeDb()
+    await draftAwaitingDate(db)
+    const extractor = extractorReturning({
+      kind: 'reply_only',
+      reply: 'never reached',
+      intent: 'smalltalk',
+    })
+
+    const result = await runChatTurn(
+      db.client,
+      extractor,
+      { ...turnInput, message: 'yesterday' },
+      classifierReturning({
+        intent: 'answer',
+        updates: [{ entryId: 'e1', slot: 'date', value: 'yesterday' }],
+      }),
+    )
+
+    expect(extractor.calls).toHaveLength(0)
+    expect(result.ui.kind).toBe('confirmation')
+    const ui = result.ui as Extract<ChatUi, { kind: 'confirmation' }>
+    expect(ui.entries[0]).toMatchObject({ date: '2026-07-21', state: 'ready' })
+  })
+
+  it('corrects an already-resolved slot instead of only the one being asked about', async () => {
+    // The live field report: the bot was asking about the date, but the person actually meant
+    // to correct the project — "oh i meant Turner, not Clayco" — a slot that had already
+    // resolved. This is the whole reason the classifier gets every entry, not just the
+    // pending question's slot.
+    const db = new FakeDb()
+    await draftAwaitingDate(db)
+
+    const result = await runChatTurn(
+      db.client,
+      extractorReturning({
+        kind: 'reply_only',
+        reply: 'never reached',
+        intent: 'smalltalk',
+      }),
+      { ...turnInput, message: 'oh i meant Turner, not Clayco' },
+      classifierReturning({
+        intent: 'answer',
+        updates: [{ entryId: 'e1', slot: 'project', value: 'Turner' }],
+      }),
+    )
+
+    // Still waiting on the date — the project changed, nothing else did.
+    expect(result.ui.kind).toBe('question')
+    const ui = result.ui as Extract<ChatUi, { kind: 'question' }>
+    expect(ui.slot).toBe('date')
+
+    const entries = db.drafts[0]!.entries as { project: { projectName?: string } }[]
+    expect(entries[0]!.project.projectName).toBe('Turner Construction — Riverside Bridge')
+  })
+
+  it('applies more than one correction from a single message', async () => {
+    const db = new FakeDb()
+    await draftAwaitingDate(db)
+
+    const result = await runChatTurn(
+      db.client,
+      extractorReturning({
+        kind: 'reply_only',
+        reply: 'never reached',
+        intent: 'smalltalk',
+      }),
+      { ...turnInput, message: 'actually 6 hours on Tuesday' },
+      classifierReturning({
+        intent: 'answer',
+        updates: [
+          { entryId: 'e1', slot: 'hours', value: '6' },
+          { entryId: 'e1', slot: 'date', value: 'Tuesday' },
+        ],
+      }),
+    )
+
+    expect(result.ui.kind).toBe('confirmation')
+    const ui = result.ui as Extract<ChatUi, { kind: 'confirmation' }>
+    expect(ui.entries[0]).toMatchObject({ hours: 6, date: '2026-07-21' })
+  })
+
+  it('falls through to ordinary extraction when the classifier says this is unrelated', async () => {
+    const db = new FakeDb()
+    await draftAwaitingDate(db)
+    const extractor = extractorReturning({
+      kind: 'submit_time_entries',
+      reply: 'Got it — a second entry.',
+      entries: [
+        {
+          project_query: 'clayco',
+          date_expression: 'today',
+          hours: 2,
+          description: 'unrelated follow-up',
+          billable: null,
+          charge_code_hint: null,
+        },
+      ],
+    })
+
+    await runChatTurn(
+      db.client,
+      extractor,
+      { ...turnInput, message: 'also log 2 hours on Clayco today' },
+      classifierReturning({ intent: 'new_message' }),
+    )
+
+    // The full extractor ran, exactly as it would have with no pending draft at all.
+    expect(extractor.calls).toHaveLength(1)
+  })
+
+  it('degrades to ordinary extraction rather than failing the turn when the classifier itself fails', async () => {
+    const db = new FakeDb()
+    await draftAwaitingDate(db)
+    const extractor = extractorReturning({
+      kind: 'submit_time_entries',
+      reply: 'Got it.',
+      entries: [
+        {
+          project_query: 'clayco',
+          date_expression: 'yesterday',
+          hours: 8,
+          description: 'Structural review',
+          billable: null,
+          charge_code_hint: null,
+        },
+      ],
+    })
+    const brokenClassifier = {
+      async classify(): Promise<never> {
+        throw new GatewayError(503, 'req_1')
+      },
+    }
+
+    const result = await runChatTurn(
+      db.client,
+      extractor,
+      { ...turnInput, message: 'yesterday' },
+      brokenClassifier,
+    )
+
+    // Never a 500 to the user, and never a stuck turn — the ordinary extractor took over.
+    expect(extractor.calls).toHaveLength(1)
+    expect(result.ui.kind).toBe('confirmation')
   })
 })
 

@@ -75,22 +75,43 @@ const DEFAULT_TIMEOUT_MS = 45_000
  * endpoint that ignores the `tools` field entirely, and the model answers in prose. That
  * would show up as a mysterious extraction failure rather than a routing problem.
  */
-const PROVIDER_POLICY = {
+export const PROVIDER_POLICY = {
   data_collection: 'deny',
   zdr: true,
   require_parameters: true,
 } as const
 
-export function createOpenRouterExtractor(config: OpenRouterConfig): Extractor {
+/** The subset of {@link OpenRouterConfig} that {@link callToolChoiceRequired} needs. */
+export type GatewayCallConfig = {
+  apiKey: string
+  model: string
+  siteUrl: string
+  appTitle: string
+  baseUrl?: string
+  fetchImpl?: typeof fetch
+  timeoutMs?: number
+  sleep?: (ms: number) => Promise<void>
+}
+
+/**
+ * The retry and error-mapping shared by every caller that sends a tool-choice-required chat
+ * completion to OpenRouter — the timesheet extractor below, and the lighter continuation
+ * classifier in `lib/chat/continuation.ts` that reads a pending draft's free-text answers.
+ *
+ * One request id ties the header sent to the log line a failure produces, across the retry. A
+ * 402 will still be a 402 in two seconds, and a schema failure will reproduce, so only 429/5xx
+ * are retried, and only once.
+ */
+export async function callToolChoiceRequired(
+  config: GatewayCallConfig,
+  body: Record<string, unknown>,
+  requestId: string,
+): Promise<string> {
   const baseUrl = config.baseUrl ?? DEFAULT_BASE_URL
   const fetchImpl = config.fetchImpl ?? fetch
   const sleep = config.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)))
-  const newRequestId = config.requestIdFactory ?? randomUUID
 
-  async function callOnce(
-    body: unknown,
-    requestId: string,
-  ): Promise<{ status: number; text: string }> {
+  async function callOnce(): Promise<{ status: number; text: string }> {
     const controller = new AbortController()
     const timer = setTimeout(
       () => controller.abort(),
@@ -117,6 +138,32 @@ export function createOpenRouterExtractor(config: OpenRouterConfig): Extractor {
     }
   }
 
+  let attempt = await callOnce()
+
+  // Retry once, and only for the failures a retry can actually fix. A 402 will still be
+  // a 402 in two seconds, and a schema failure will reproduce.
+  if (attempt.status === 429 || attempt.status >= 500) {
+    await sleep(1000)
+    attempt = await callOnce()
+  }
+
+  if (attempt.status === 402) throw new CreditsExhaustedError(requestId)
+  if (attempt.status === 429) throw new GatewayRateLimitError(requestId)
+  if (attempt.status === 404 && /no endpoints|no allowed providers/i.test(attempt.text)) {
+    // The provider policy left nothing to route to. Fail closed rather than retrying
+    // without `zdr` — the whole point of the flag is that it is not negotiable.
+    throw new NoCompliantEndpointError(config.model, requestId)
+  }
+  if (attempt.status < 200 || attempt.status >= 300) {
+    throw new GatewayError(attempt.status, requestId)
+  }
+
+  return attempt.text
+}
+
+export function createOpenRouterExtractor(config: OpenRouterConfig): Extractor {
+  const newRequestId = config.requestIdFactory ?? randomUUID
+
   return {
     async extract({ systemPrompt, messages, userKey }) {
       const requestId = newRequestId()
@@ -138,30 +185,8 @@ export function createOpenRouterExtractor(config: OpenRouterConfig): Extractor {
         ],
       }
 
-      let attempt = await callOnce(body, requestId)
-
-      // Retry once, and only for the failures a retry can actually fix. A 402 will still be
-      // a 402 in two seconds, and a schema failure will reproduce.
-      if (attempt.status === 429 || attempt.status >= 500) {
-        await sleep(1000)
-        attempt = await callOnce(body, requestId)
-      }
-
-      if (attempt.status === 402) throw new CreditsExhaustedError(requestId)
-      if (attempt.status === 429) throw new GatewayRateLimitError(requestId)
-      if (
-        attempt.status === 404 &&
-        /no endpoints|no allowed providers/i.test(attempt.text)
-      ) {
-        // The provider policy left nothing to route to. Fail closed rather than retrying
-        // without `zdr` — the whole point of the flag is that it is not negotiable.
-        throw new NoCompliantEndpointError(config.model, requestId)
-      }
-      if (attempt.status < 200 || attempt.status >= 300) {
-        throw new GatewayError(attempt.status, requestId)
-      }
-
-      return readCompletion(attempt.text, config.model, requestId)
+      const text = await callToolChoiceRequired(config, body, requestId)
+      return readCompletion(text, config.model, requestId)
     },
   }
 }
