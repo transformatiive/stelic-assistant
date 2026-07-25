@@ -104,6 +104,24 @@ export type ServiceTokenRow = {
   connectedAt?: Date | null
 }
 
+export type DraftRow = {
+  id: string
+  conversationId: string
+  userId: string
+  status: string
+  entries: unknown
+  createdAt: Date
+  expiresAt: Date
+}
+
+export type MessageRow = {
+  id: string
+  conversationId: string
+  role: string
+  content: string
+  createdAt: Date
+}
+
 export class FakeDb {
   users: UserRow[] = []
   tokens: TokenRow[] = []
@@ -111,6 +129,8 @@ export class FakeDb {
   serviceTokens: ServiceTokenRow[] = []
   projectIndexes: ProjectIndexRow[] = []
   commitLogs: CommitLogRow[] = []
+  drafts: DraftRow[] = []
+  messages: MessageRow[] = []
   private nextId = 1
 
   seedUser(overrides: Partial<UserRow> = {}): UserRow {
@@ -388,6 +408,77 @@ export class FakeDb {
       Object.assign(row, data)
       return row
     },
+  }
+
+  seedDraft(overrides: Partial<DraftRow> & { userId: string }): DraftRow {
+    const row: DraftRow = {
+      id: `draft_${this.nextId++}`,
+      conversationId: 'conv_1',
+      status: 'pending',
+      entries: [],
+      createdAt: new Date('2026-07-25T12:00:00Z'),
+      expiresAt: new Date('2026-07-25T14:00:00Z'),
+      ...overrides,
+    }
+    this.drafts.push(row)
+    return row
+  }
+
+  seedMessage(overrides: Partial<MessageRow> = {}): MessageRow {
+    const row: MessageRow = {
+      id: `msg_${this.nextId++}`,
+      conversationId: 'conv_1',
+      role: 'user',
+      content: '8 hours on Clayco yesterday — structural review',
+      createdAt: new Date('2026-07-25T11:59:00Z'),
+      ...overrides,
+    }
+    this.messages.push(row)
+    return row
+  }
+
+  readonly draft = {
+    findFirst: async ({
+      where,
+    }: {
+      where: { id?: string; userId?: string; status?: string; expiresAt?: { gt: Date } }
+    }) =>
+      this.drafts.find(
+        (d) =>
+          (where.id === undefined || d.id === where.id) &&
+          (where.userId === undefined || d.userId === where.userId) &&
+          (where.status === undefined || d.status === where.status) &&
+          (where.expiresAt === undefined || d.expiresAt > where.expiresAt.gt),
+      ) ?? null,
+
+    update: async ({
+      where,
+      data,
+    }: {
+      where: { id: string }
+      data: Partial<DraftRow>
+    }) => {
+      const row = this.drafts.find((d) => d.id === where.id)!
+      Object.assign(row, data)
+      return row
+    },
+  }
+
+  readonly message = {
+    findFirst: async ({
+      where,
+    }: {
+      where: { conversationId: string; role?: string; createdAt?: { lte: Date } }
+    }) =>
+      [...this.messages]
+        .filter(
+          (m) =>
+            m.conversationId === where.conversationId &&
+            (where.role === undefined || m.role === where.role) &&
+            (where.createdAt === undefined || m.createdAt <= where.createdAt.lte),
+        )
+        // The route asks for the newest first, which is what makes it *the* source message.
+        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0] ?? null,
   }
 
   readonly serviceToken = {

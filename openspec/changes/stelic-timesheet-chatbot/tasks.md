@@ -443,9 +443,15 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
       — three entries where the second fails log two. Rate limiting and an expired credential
       stop the run instead, since they fail every remaining entry identically; the untried
       ones come back as `skipped` rather than `failed`
-- [ ] 6.5 `/api/drafts/{id}/confirm` — re-read the draft server-side, ignore any client-sent
-      entry data
-- [ ] 6.6 `/api/drafts/{id}/cancel`
+- [x] 6.5 `/api/drafts/{id}/confirm` — re-read the draft server-side, ignore any client-sent
+      entry data. The route takes an id and nothing else; the body is not parsed at all. The
+      draft is looked up scoped by `userId`, so someone else's is indistinguishable from one
+      that does not exist. A draft commits **as far as it can go** (CHAT-3): an entry still
+      awaiting an answer does not hold back the ones beside it, and the draft stays `pending`
+      until nothing is left to answer or retry
+- [x] 6.6 `/api/drafts/{id}/cancel` — idempotent, since the failure mode of a cancel button is
+      a double tap. A confirmed draft is refused: cancelling does not undo anything, and
+      answering `200` would leave someone believing hours had been removed from Zoho
 - [ ] 6.7 Undo: `/api/entries/{id}/undo` with same-day and app-origin guards; refuse approved
       logs
 - [ ] 6.8 Week read-back: `/api/entries/week` grouped by day with total
