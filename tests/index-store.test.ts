@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { IndexedProjectRow } from '@/lib/index/build'
 import {
+  INDEX_MIN_RETRY_MS,
   INDEX_TTL_MS,
   isIndexStale,
   loadProjectIndex,
@@ -185,5 +186,52 @@ describe('isIndexStale', () => {
     const justOutside = new Date(NOW.getTime() + INDEX_TTL_MS + 1000)
     expect(await isIndexStale(db.client, 'u1', justInside)).toBe(false)
     expect(await isIndexStale(db.client, 'u1', justOutside)).toBe(true)
+  })
+})
+
+describe('an index with no charge codes is stale, however recent', () => {
+  // Seen live: 145 projects indexed, 145 task reads rejected. The result was fresh by
+  // timestamp and useless in substance — it could match a project but had nothing to log to,
+  // and the next hour was spent trusting it.
+  const codeless = () => row({ chargeCodes: [] })
+
+  it('rebuilds once past the retry floor when nothing has a charge code', async () => {
+    const db = new FakeDb()
+    await saveProjectIndex(db.client, 'u1', [codeless()], NOW)
+
+    const later = new Date(NOW.getTime() + INDEX_MIN_RETRY_MS + 1000)
+    expect(await isIndexStale(db.client, 'u1', later)).toBe(true)
+  })
+
+  it('does not rebuild on every page load', async () => {
+    // A portal that genuinely has no tasks must not become a rate-limit problem.
+    const db = new FakeDb()
+    await saveProjectIndex(db.client, 'u1', [codeless()], NOW)
+
+    const soon = new Date(NOW.getTime() + 60_000)
+    expect(await isIndexStale(db.client, 'u1', soon)).toBe(false)
+  })
+
+  it('leaves a working index alone', async () => {
+    const db = new FakeDb()
+    await saveProjectIndex(db.client, 'u1', [row()], NOW)
+
+    const later = new Date(NOW.getTime() + INDEX_MIN_RETRY_MS + 1000)
+    expect(await isIndexStale(db.client, 'u1', later)).toBe(false)
+  })
+
+  it('still expires on age, charge codes or not', async () => {
+    const db = new FakeDb()
+    await saveProjectIndex(db.client, 'u1', [row()], NOW)
+    expect(
+      await isIndexStale(db.client, 'u1', new Date(NOW.getTime() + INDEX_TTL_MS + 1000)),
+    ).toBe(true)
+  })
+
+  it('counts a single project with codes as enough', async () => {
+    const db = new FakeDb()
+    await saveProjectIndex(db.client, 'u1', [codeless(), row({ projectId: 'p2' })], NOW)
+    const later = new Date(NOW.getTime() + INDEX_MIN_RETRY_MS + 1000)
+    expect(await isIndexStale(db.client, 'u1', later)).toBe(false)
   })
 })
