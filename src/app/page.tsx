@@ -5,6 +5,7 @@ import { prisma } from '@/lib/db'
 import { loadSession } from '@/lib/auth/store'
 import { readCookie } from '@/lib/auth/request'
 import { StelicMark } from '@/components/stelic-mark'
+import { IndexWarmer } from './index-warmer'
 import { SignOutButton } from './sign-out-button'
 
 /**
@@ -42,6 +43,8 @@ export default async function Home() {
         </div>
         <SignOutButton />
       </header>
+
+      <IndexWarmer />
 
       <p className="text-sm opacity-70">
         Chat is not wired up yet. Sign-in, sessions and the Zoho credential plumbing are
