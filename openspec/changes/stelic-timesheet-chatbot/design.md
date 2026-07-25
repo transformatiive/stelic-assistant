@@ -325,7 +325,21 @@ Conversation
 
 Message
   id, conversation_id FK, role ('user' | 'assistant'), content,
-  ui_payload jsonb NULL, created_at
+  ui_payload jsonb NULL, created_at,
+  -- gateway accounting (task 4.6); null on assistant turns produced without a model call
+  generation_id NULL, model_requested NULL, model_served NULL,
+  prompt_tokens NULL, completion_tokens NULL, cost_usd decimal NULL
+
+ServiceToken                     -- single row; the vault TRNSF-600 credential, reads only
+  id, access_token_encrypted, expires_at, refreshed_at
+  -- rapid successive refreshes on this tenant trigger rate limiting, so the access token is
+  -- cached here and refreshed at most once per expiry window across all app instances.
+  -- The refresh token itself is never stored here: it comes from the vault at boot (§7).
+
+RateLimit                        -- fixed-window counter, per user per route
+  id, user_id FK, bucket,            -- e.g. 'chat'
+  window_started_at, count
+  @@unique([user_id, bucket, window_started_at])
 
 Draft                            -- a pending set of entries awaiting confirmation
   id, conversation_id FK, user_id FK, status ('pending'|'confirmed'|'cancelled'|'expired'),
@@ -434,7 +448,7 @@ For each `DraftEntry`, in order:
 5. **Description.** Present, trimmed, ≥ 5 characters and not a single filler word
    (`work`, `stuff`, `misc`, `n/a`) → resolved. Otherwise unresolved slot; the bot asks.
 6. **Billable.** Explicit statement wins; otherwise the configured default
-   (`DEFAULT_BILL_STATUS`, open question #4).
+   (`DEFAULT_BILL_STATUS`, open question #5).
 
 ### 4.3 Clarify
 
@@ -584,17 +598,26 @@ VAULT_EPIC_KEY                  # TRNSF-600
 TOKEN_ENCRYPTION_KEY            # 32-byte key, AES-256-GCM
 SESSION_COOKIE_NAME
 SESSION_MAX_AGE_DAYS            # default 30, sliding
-DAILY_HOUR_CAP                  # open question #3
-BACKDATE_WARN_DAYS              # open question #5
-DEFAULT_BILL_STATUS             # open question #4
+DAILY_HOUR_CAP                  # open question #4
+BACKDATE_WARN_DAYS              # open question #6
+DEFAULT_BILL_STATUS             # open question #5
 DEFAULT_TIMEZONE                # America/New_York
 ```
 
-Credentials are resolved from the credential vault (`TRNSF-600`) at deploy time and injected
-as Railway environment variables. No credential is committed to the repository. The existing
-Stelic service refresh token **is** reused — for reads only — and the existing OAuth client is
-extended with a redirect URI rather than replaced. Per-user refresh tokens are separate,
-encrypted, and never leave the server.
+**The vault is the source, the environment is the interface.** Credentials are resolved from
+the credential vault (`TRNSF-600`) **at deploy time** and injected as Railway environment
+variables. The running application reads credentials only from its environment — it does not
+call `VAULT_URL` on the hot path, at boot, or on token refresh. `VAULT_URL` and
+`VAULT_EPIC_KEY` exist for the deploy-time fetch and for the operational runbook (task 11.2),
+not for runtime resolution. Where §2 says the app "reads the credential from the vault", read
+it as *the deploy pipeline does* — there is one runtime source of truth, and it is
+`ZOHO_SERVICE_REFRESH_TOKEN`.
+
+Config is validated at boot and the process fails fast on a missing or malformed variable
+(task 1.6). No credential is committed to the repository. The existing Stelic service refresh
+token **is** reused — for reads only — and the existing OAuth client is extended with a
+redirect URI rather than replaced. Per-user refresh tokens are separate, encrypted, and never
+leave the server.
 
 ---
 

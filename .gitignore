@@ -1,0 +1,49 @@
+# Secrets — never commit. All credentials come from the environment (design.md §7).
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build output
+.next/
+out/
+build/
+dist/
+*.tsbuildinfo
+next-env.d.ts
+
+# Test / coverage
+coverage/
+test-results/
+playwright-report/
+blob-report/
+.playwright/
+
+# Prisma
+prisma/*.db
+prisma/*.db-journal
+
+# Tooling caches
+.eslintcache
+.turbo/
+.vercel/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
