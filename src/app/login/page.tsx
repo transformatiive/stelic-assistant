@@ -1,3 +1,4 @@
+import { StelicMark } from '@/components/stelic-mark'
 import { AUTH_MESSAGES, type AuthErrorReason } from '@/lib/auth/messages'
 import { safeReturnTo } from '@/lib/auth/oauth-state'
 
@@ -37,7 +38,8 @@ export default async function LoginPage({
 
   return (
     <main className="mx-auto flex min-h-dvh max-w-sm flex-col justify-center gap-8 p-6">
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-4">
+        <StelicMark size={56} />
         <h1 className="text-2xl font-semibold tracking-tight">Stelic Assistant</h1>
         <p className="text-sm opacity-70">
           Log your time by chatting. Sign in with the same Zoho account you use for
@@ -55,11 +57,16 @@ export default async function LoginPage({
       ) : null}
 
       {/* A plain link, not a form: this is a GET that starts a redirect chain, and it must
-          work before any JavaScript has loaded. */}
+          work before any JavaScript has loaded.
+
+          The colours swap by theme rather than staying constant, because Stelic navy on a
+          near-black page is a 1.25:1 edge — the button simply disappears. Dark mode uses
+          Stelic's action blue with navy text: 5.14:1, and 6.41:1 against the page. White on
+          that blue would have been 3.09:1 and failed AA, so the text inverts too. */}
       <a
         href={href}
         rel="nofollow"
-        className="flex min-h-12 items-center justify-center rounded-xl bg-neutral-900 px-4 text-center text-base font-medium text-white transition-opacity hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 dark:bg-white dark:text-neutral-900"
+        className="bg-stelic-navy focus-visible:outline-stelic-blue dark:bg-stelic-blue dark:text-stelic-navy flex min-h-12 items-center justify-center rounded-xl px-4 text-center text-base font-medium text-white transition-opacity hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2"
       >
         Sign in with Zoho
       </a>

@@ -1,5 +1,13 @@
 @import 'tailwindcss';
 
+/* Stelic's own palette, sampled from stelic.com. Named rather than pasted as hex at each
+   call site, so a rebrand is one edit and nobody invents a fourth navy. */
+@theme {
+  --color-stelic-navy: #0b204b;
+  --color-stelic-blue: #009be3;
+  --color-stelic-sky: #4ec2f6;
+}
+
 :root {
   color-scheme: light dark;
 }

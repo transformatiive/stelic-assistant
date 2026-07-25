@@ -4,6 +4,7 @@ import { loadConfig } from '@/lib/config'
 import { prisma } from '@/lib/db'
 import { loadSession } from '@/lib/auth/store'
 import { readCookie } from '@/lib/auth/request'
+import { StelicMark } from '@/components/stelic-mark'
 import { SignOutButton } from './sign-out-button'
 
 /**
@@ -30,11 +31,14 @@ export default async function Home() {
   return (
     <main className="mx-auto flex min-h-dvh max-w-md flex-col gap-6 p-6">
       <header className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Stelic Assistant</h1>
-          <p className="text-sm opacity-70">
-            Signed in as {user.displayName ?? user.email}
-          </p>
+        <div className="flex items-center gap-3">
+          <StelicMark size={36} />
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight">Stelic Assistant</h1>
+            <p className="text-sm opacity-70">
+              Signed in as {user.displayName ?? user.email}
+            </p>
+          </div>
         </div>
         <SignOutButton />
       </header>
