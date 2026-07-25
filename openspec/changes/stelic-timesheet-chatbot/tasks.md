@@ -64,8 +64,11 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
       `https://stelic-assistant-production.up.railway.app/api/auth/callback` — which must match
       `ZOHO_REDIRECT_URI` character for character, or Zoho answers `redirect_uri_mismatch`.
       Created 2026-07-25 as `Stelic Assistant`, and proven end to end by a real sign-in.
-- [ ] 0.4 Confirm open questions 2 and 9 in `proposal.md` (portal membership coverage,
+- [x] 0.4 Confirm open questions 2 and 9 in `proposal.md` (portal membership coverage,
       production domain)
+      — Both answered. **Question 2: yes, everyone has a Zoho account** (confirmed 2026-07-25),
+      so per-user login locks nobody out. Question 9: the production domain is
+      `https://stelic-assistant-production.up.railway.app`.
 - [ ] 0.5 Provision the OpenRouter key (dedicated key for this app so spend is attributable),
       set the account privacy defaults, and register it in the vault under `TRNSF-600`
 
@@ -401,10 +404,21 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
       zpuid (spike 1.4), so the commit pipeline needs it on the `User` row
       — done with task 2.4: the callback writes `login_id` to both `zohoUserId` and
       `zohoProjectsUserId`, and a test asserts it
-- [ ] 5.10 Settle the timezone. The portal is configured `America/Los_Angeles` but
+- [x] 5.10 Settle the timezone. The portal is configured `America/Los_Angeles` but
       `DEFAULT_TIMEZONE` is `America/New_York` (open question 11). Date resolution is already
       timezone-parameterised, so this is a configuration and per-user-preference decision, not
       a code change — but getting it wrong shifts logs by a day either side of midnight
+      — **Answered 2026-07-25: neither. It is per person.** Stelic's people are in dispersed
+      timezones, and a timesheet records a *day*, not an instant — so "yesterday" has to mean
+      yesterday where the person is. A single app-wide zone would be wrong for most of them,
+      and the portal's own setting describes where the portal was configured, not where anyone
+      is sitting.
+      The browser reports it (`Intl.DateTimeFormat().resolvedOptions().timeZone`), the app
+      stores it on `User.timezone`, and the resolver already took a zone. Validated as an IANA
+      name the runtime recognises — **a UTC offset is rejected**, because an offset cannot
+      express DST, which is the exact class of bug this area exists to avoid.
+      `DEFAULT_TIMEZONE` survives as the value a brand-new row starts with, before the browser
+      has said anything.
 - [x] 5.8 Unit tests for the full resolver against the spec scenarios
       — 45 covering entry resolution, the slot machine and the warnings, on a fixture built
       from **live** project shapes (`1066 - 1066 - Clayco EKI Data Center`,
