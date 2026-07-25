@@ -31,6 +31,9 @@ const PUBLIC_FILES = [
   // Read by iOS before there is any session — an *Add to Home Screen* from the login page
   // would otherwise get a redirect where it expected a PNG, and fall back to a screenshot.
   '/apple-touch-icon.png',
+  // A health check has no session by definition. It answers up-or-down and nothing else, so
+  // there is nothing here for an unauthenticated caller to learn (task 9.4).
+  '/api/health',
 ]
 
 // Read directly: this runs in the edge runtime, where `loadConfig` (and the Node
@@ -43,14 +46,40 @@ function isPublic(pathname: string): boolean {
   return PUBLIC_PREFIXES.some((prefix) => pathname.startsWith(prefix))
 }
 
+/**
+ * One request id for the whole call, minted here when nothing upstream set one (task 9.1).
+ *
+ * At the edge rather than in each handler, so a request that never reaches a handler — a 401
+ * from this file, say — is still traceable, and so a platform-set id is preferred over one of
+ * ours when Railway or a proxy has already assigned it.
+ */
+function withRequestId(request: NextRequest, response: NextResponse): NextResponse {
+  const id = request.headers.get('x-request-id') ?? crypto.randomUUID()
+  response.headers.set('x-request-id', id)
+  return response
+}
+
+/** Pass the id inward, so the handler's logger picks the same one out of the request. */
+function forward(request: NextRequest): NextResponse {
+  const id = request.headers.get('x-request-id') ?? crypto.randomUUID()
+  const headers = new Headers(request.headers)
+  headers.set('x-request-id', id)
+  const response = NextResponse.next({ request: { headers } })
+  response.headers.set('x-request-id', id)
+  return response
+}
+
 export function proxy(request: NextRequest): NextResponse {
   const { pathname, search } = request.nextUrl
 
-  if (isPublic(pathname)) return NextResponse.next()
-  if (request.cookies.has(SESSION_COOKIE_NAME)) return NextResponse.next()
+  if (isPublic(pathname)) return forward(request)
+  if (request.cookies.has(SESSION_COOKIE_NAME)) return forward(request)
 
   if (pathname.startsWith('/api/')) {
-    return NextResponse.json({ error: 'unauthenticated' }, { status: 401 })
+    return withRequestId(
+      request,
+      NextResponse.json({ error: 'unauthenticated' }, { status: 401 }),
+    )
   }
 
   const login = request.nextUrl.clone()
@@ -58,7 +87,7 @@ export function proxy(request: NextRequest): NextResponse {
   login.search = ''
   // Come back to where they were trying to go, so a deep link survives sign-in.
   if (pathname !== '/') login.searchParams.set('returnTo', `${pathname}${search}`)
-  return NextResponse.redirect(login)
+  return withRequestId(request, NextResponse.redirect(login))
 }
 
 export const config = {

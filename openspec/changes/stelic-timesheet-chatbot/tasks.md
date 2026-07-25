@@ -606,17 +606,52 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
 
 ## 9. Hardening
 
-- [ ] 9.1 Structured logging with request ids; ensure no message content reaches third-party
-      sinks
-- [ ] 9.2 Verify no secret is reachable from the client bundle (build-time check)
-- [ ] 9.3 Input length limits and prompt-injection guard on user text (the model must never
+- [x] 9.1 Structured logging with request ids; ensure no message content reaches third-party
+      sinks — one logger (`lib/observability/log.ts`) replacing two ad-hoc ones and twenty-odd
+      bare `console.info(JSON.stringify(…))` calls. Each of those was individually careful,
+      which is the problem: carefulness that lives at every call site is carefulness a future
+      call site will not have. The request id travels in `AsyncLocalStorage`, so a logger deep
+      in the Zoho client carries it without taking it as a parameter, and a `route()` wrapper
+      turns an uncaught error into a logged 500 with that id rather than Next's default page.
+      **`redact` drops the forbidden field names rather than masking them** — `"description":
+      "[redacted]"` still tells a reader an entry had one, and invites someone to unmask it
+      "temporarily"
+- [x] 9.2 Verify no secret is reachable from the client bundle (build-time check)
+      — `npm run check:bundle`, two passes: every secret-shaped env var searched **by value**
+      in the emitted client chunks, plus **by shape** for credentials this process cannot see
+      (a CI box without production env, or a hard-coded one). **The checker is itself tested**
+      against a fixture with planted secrets, because a scanner that has only ever reported
+      "clean" is a scanner nobody has tested — and it fails loudly on an empty scan, since a
+      green check that never opened a file is the worst outcome. It never prints what it found
+- [x] 9.3 Input length limits and prompt-injection guard on user text (the model must never
       be able to widen its own tool surface)
-- [ ] 9.4 Health check endpoint + Railway restart policy
-- [ ] 9.5 Seed/import script to warm the project index for all portal users
-- [ ] 9.6 Operational alerting for configuration and quota faults that are not the user's
+      — **no phrase filter, deliberately.** Every list of forbidden phrasings is a list
+      somebody rephrases around, and relying on one would rest the app's safety on a regex.
+      The guarantee is structural and now tested as such: two tools and no others, a malformed
+      call discarded whole rather than partly used, every value re-derived by deterministic
+      code that ignores what the model thought, and a confirmation tap before anything is
+      written. The mechanical part — control characters, bidi overrides that can hide text,
+      zero-width padding, a length bound — is `lib/chat/sanitise.ts`, sanitising **before**
+      the bound so invisible padding cannot smuggle a message past it
+- [x] 9.4 Health check endpoint + Railway restart policy — `/api/health` checks the database
+      and **nothing else**: a check that called Zoho or OpenRouter would fail the instance
+      during someone else's outage and have Railway restart a container that was working,
+      turning a degraded dependency into an unavailable app. It exposes up-or-down only — an
+      unauthenticated endpoint answering "which env vars are set" is a reconnaissance gift.
+      Railway: healthcheck `/api/health`, timeout 30s, restart `ON_FAILURE` ×10
+- [x] 9.5 Seed/import script to warm the project index for all portal users
+      — `scripts/warm-index.mjs`. Not a loop over people: the index is **shared**, so one
+      rebuild serves everybody. It triggers the same endpoint the schedule calls rather than
+      carrying a second, subtly different rebuild for operators to keep in sync, and it reads
+      the body rather than the status, because that route answers 200 on failure by design
+- [x] 9.6 Operational alerting for configuration and quota faults that are not the user's
       fault: portal-user lookup failing on scope (auth spec: *Portal user lookup is
       unavailable*), OpenRouter `402`, no ZDR-eligible endpoint. One channel, one severity —
       the user always sees a plain sentence, never the cause
+      — `alert()` emits `level: "alert"` and nothing else does, so a drain filters on one
+      predicate and a human is woken by one rule. A second severity becomes the one nobody
+      routes. Wired to all three named faults plus a dead service credential and a missing
+      `CRON_SECRET`; the user-facing message never changes
 
 ## 10. Verification
 

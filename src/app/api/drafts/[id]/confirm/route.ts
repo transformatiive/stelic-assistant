@@ -5,6 +5,8 @@ import { loadConfig } from '@/lib/config'
 import { serviceCrmClient, userProjectsClient } from '@/lib/zoho/factory'
 import { confirmDraft, type ConfirmRefusal } from '@/lib/commit/confirm'
 import { createRoleStamper } from '@/lib/commit/role-stamp'
+import { route } from '@/lib/observability/route'
+import { log } from '@/lib/observability/log'
 
 /**
  * `POST /api/drafts/{id}/confirm` — write the draft into Zoho (task 6.5).
@@ -38,7 +40,7 @@ const REFUSALS: Record<ConfirmRefusal, { status: number; message: string }> = {
   },
 }
 
-export async function POST(
+export const POST = route(async function POST(
   request: Request,
   context: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
@@ -65,17 +67,14 @@ export async function POST(
     draftId: id,
     zohoUserId: session.user.zohoUserId,
     stampRole,
-    logger: {
-      info: (event, fields) => console.info(JSON.stringify({ event, ...fields })),
-      warn: (event, fields) => console.warn(JSON.stringify({ event, ...fields })),
-    },
+    logger: log,
   })
 
   if (!result.ok) {
     const refusal = REFUSALS[result.refusal]
     if (result.refusal === 'no_source_message') {
       // An invariant the chat API is supposed to hold: a draft always follows a message.
-      console.error(JSON.stringify({ event: 'confirm.no_source_message', draftId: id }))
+      log.error('confirm.no_source_message', { draftId: id })
     }
     return NextResponse.json(
       { error: result.refusal, message: refusal.message },
@@ -84,4 +83,4 @@ export async function POST(
   }
 
   return NextResponse.json(result)
-}
+})

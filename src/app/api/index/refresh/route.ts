@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db'
 import { requireApiSession } from '@/lib/auth/guard'
 import { refreshProjectIndex } from '@/lib/index/refresh'
 import { isIndexStale } from '@/lib/index/store'
+import { route } from '@/lib/observability/route'
 
 /**
  * `POST /api/index/refresh` — rebuild on demand (task 3.4).
@@ -18,7 +19,7 @@ export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 800
 
-export async function GET(request: Request): Promise<NextResponse> {
+export const GET = route(async function GET(request: Request): Promise<NextResponse> {
   const session = await requireApiSession(request)
   if (!session.ok) return session.response
 
@@ -27,9 +28,9 @@ export async function GET(request: Request): Promise<NextResponse> {
     prisma.projectIndex.count(),
   ])
   return NextResponse.json({ stale, projects })
-}
+})
 
-export async function POST(request: Request): Promise<NextResponse> {
+export const POST = route(async function POST(request: Request): Promise<NextResponse> {
   const session = await requireApiSession(request)
   if (!session.ok) return session.response
 
@@ -38,4 +39,4 @@ export async function POST(request: Request): Promise<NextResponse> {
     userId: session.user.id,
   })
   return NextResponse.json(outcome, { status: outcome.ok ? 200 : 502 })
-}
+})

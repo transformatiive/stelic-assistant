@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { requireApiSession } from '@/lib/auth/guard'
 import { cancelDraft } from '@/lib/commit/confirm'
+import { route } from '@/lib/observability/route'
 
 /**
  * `POST /api/drafts/{id}/cancel` — discard a draft without writing anything (task 6.6).
@@ -14,7 +15,7 @@ import { cancelDraft } from '@/lib/commit/confirm'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-export async function POST(
+export const POST = route(async function POST(
   request: Request,
   context: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
@@ -38,4 +39,4 @@ export async function POST(
   }
 
   return NextResponse.json({ draftId: id, status: 'cancelled' })
-}
+})

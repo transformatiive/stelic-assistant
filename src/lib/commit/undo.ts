@@ -3,6 +3,7 @@ import type { ZohoClient } from '@/lib/zoho/client'
 import { ZohoAuthError, ZohoHttpError, ZohoRateLimitError } from '@/lib/zoho/errors'
 import { deleteTimeLog } from '@/lib/zoho/timelogs'
 import { formatIso, parseIso, todayIn, compare } from '@/lib/resolve/civil-date'
+import { log } from '@/lib/observability/log'
 
 /**
  * Undo (tasks 6.7, 6.10, CHAT-11).
@@ -112,19 +113,16 @@ export async function undoEntry(
   } catch (error) {
     // The row is left `success`, which is what it still is — the log is in Zoho. Marking it
     // undone here would lose track of a log that was never deleted.
-    console.warn(
-      JSON.stringify({
-        event: 'undo.failed',
-        commitLogId: row.id,
-        status: error instanceof ZohoHttpError ? error.status : null,
-        kind:
-          error instanceof ZohoRateLimitError
-            ? 'rate_limited'
-            : error instanceof ZohoAuthError
-              ? 'credential'
-              : 'http',
-      }),
-    )
+    log.warn('undo.failed', {
+      commitLogId: row.id,
+      status: error instanceof ZohoHttpError ? error.status : null,
+      kind:
+        error instanceof ZohoRateLimitError
+          ? 'rate_limited'
+          : error instanceof ZohoAuthError
+            ? 'credential'
+            : 'http',
+    })
     return refuse('zoho_error')
   }
 

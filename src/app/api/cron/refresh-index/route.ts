@@ -3,6 +3,8 @@ import { loadConfig } from '@/lib/config'
 import { prisma } from '@/lib/db'
 import { safeEqual } from '@/lib/auth/crypto'
 import { refreshProjectIndex } from '@/lib/index/refresh'
+import { route } from '@/lib/observability/route'
+import { alert, log } from '@/lib/observability/log'
 
 /**
  * `POST /api/cron/refresh-index` — the scheduled rebuild (task 3.4).
@@ -23,19 +25,19 @@ export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 800
 
-export async function POST(request: Request): Promise<NextResponse> {
+export const POST = route(async function POST(request: Request): Promise<NextResponse> {
   const config = loadConfig()
 
   if (!config.CRON_SECRET) {
     // Refusing is safer than running: an unauthenticated rebuild endpoint is a way to spend
     // someone else's Zoho rate limit.
-    console.error(JSON.stringify({ event: 'cron.not_configured' }))
+    alert('config', { event: 'cron.not_configured' })
     return NextResponse.json({ error: 'not_configured' }, { status: 503 })
   }
 
   const presented = request.headers.get('authorization')?.replace(/^Bearer\s+/i, '') ?? ''
   if (!safeEqual(presented, config.CRON_SECRET)) {
-    console.warn(JSON.stringify({ event: 'cron.unauthorised' }))
+    log.warn('cron.unauthorised')
     return NextResponse.json({ error: 'unauthorised' }, { status: 401 })
   }
 
@@ -43,4 +45,4 @@ export async function POST(request: Request): Promise<NextResponse> {
   // 200 either way: a scheduler retrying a rebuild that failed on a missing Zoho scope would
   // hammer the portal for nothing. The log line is the alert, not the status code.
   return NextResponse.json(outcome)
-}
+})

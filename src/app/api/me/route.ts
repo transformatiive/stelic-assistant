@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { requireApiSession } from '@/lib/auth/guard'
 import { isIndexStale } from '@/lib/index/store'
+import { route } from '@/lib/observability/route'
 
 /**
  * `GET /api/me` — who is signed in, and is the app ready to be useful (task 7.6)?
@@ -18,7 +19,7 @@ import { isIndexStale } from '@/lib/index/store'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-export async function GET(request: Request): Promise<NextResponse> {
+export const GET = route(async function GET(request: Request): Promise<NextResponse> {
   const session = await requireApiSession(request)
   if (!session.ok) return session.response
 
@@ -41,4 +42,4 @@ export async function GET(request: Request): Promise<NextResponse> {
       ready: projects > 0,
     },
   })
-}
+})

@@ -28,6 +28,7 @@ import {
 } from '@/lib/resolve/draft'
 import { nextQuestion } from '@/lib/resolve/slots'
 import { warningsForDraft } from '@/lib/resolve/warnings'
+import { log } from '@/lib/observability/log'
 import { checkScope } from './scope'
 import {
   questionText,
@@ -94,13 +95,7 @@ export async function runChatTurn(
   const scope = checkScope(input.message)
   if (!scope.inScope) {
     const assistant = await say(db, conversationId, 'assistant', scope.reply, now)
-    console.info(
-      JSON.stringify({
-        event: 'chat.out_of_scope',
-        topic: scope.topic,
-        userId: input.userId,
-      }),
-    )
+    log.info('chat.out_of_scope', { topic: scope.topic, userId: input.userId })
     return {
       conversationId,
       messageId: assistant.id,
@@ -255,13 +250,7 @@ async function stale(
   now: Date,
   conversationId: string | undefined,
 ): Promise<ChatActionResult> {
-  console.info(
-    JSON.stringify({
-      event: 'chat.stale_action',
-      userId: input.userId,
-      slot: input.slot,
-    }),
-  )
+  log.info('chat.stale_action', { userId: input.userId, slot: input.slot })
 
   const live = await loadPendingDraft(db, input.userId, now)
   if (!live) return { ok: false, reply: STALE_REPLY, ui: { kind: 'none' } }

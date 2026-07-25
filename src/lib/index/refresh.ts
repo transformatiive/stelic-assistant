@@ -4,6 +4,7 @@ import { saveProjectIndex } from './store'
 import { serviceCrmClient, serviceProjectsClient } from '@/lib/zoho/factory'
 import { ServiceCredentialUnavailable } from '@/lib/auth/token-sources'
 import { ZohoAuthError, ZohoHttpError, ZohoRateLimitError } from '@/lib/zoho/errors'
+import { alert, log } from '@/lib/observability/log'
 
 /**
  * Rebuilding the shared index (task 3.4).
@@ -36,54 +37,47 @@ export async function refreshProjectIndex(
       { projects: serviceProjectsClient(db), crm: serviceCrmClient(db) },
       {
         onTaskFailure: (project, error) =>
-          console.warn(
-            JSON.stringify({
-              event: 'index.tasks_unreadable',
-              projectId: project.id,
-              status: error instanceof ZohoHttpError ? error.status : null,
-            }),
-          ),
+          log.warn('index.tasks_unreadable', {
+            projectId: project.id,
+            status: error instanceof ZohoHttpError ? error.status : null,
+          }),
         onThrottled: (error) =>
-          console.warn(
-            JSON.stringify({
-              event: 'index.throttled',
-              retryAfterSeconds: error.retryAfterSeconds ?? null,
-              // Not a failure: every project is still indexed and matchable, and the next
-              // scheduled run fills in the charge codes it could not read.
-            }),
-          ),
+          // Not a failure: every project is still indexed and matchable, and the next
+          // scheduled run fills in the charge codes it could not read.
+          log.warn('index.throttled', {
+            retryAfterSeconds: error.retryAfterSeconds ?? null,
+          }),
       },
     )
 
     const saved = await saveProjectIndex(db, result.rows)
     const ms = Date.now() - startedAt
 
-    console.info(
-      JSON.stringify({
-        event: 'index.rebuilt',
-        trigger: options.trigger,
-        userId: options.userId ?? null,
-        ...result.stats,
-        ...saved,
-        ms,
-      }),
-    )
+    log.info('index.rebuilt', {
+      trigger: options.trigger,
+      userId: options.userId ?? null,
+      ...result.stats,
+      ...saved,
+      ms,
+    })
 
     return { ok: true, stats: result.stats, ...saved, ms }
   } catch (error) {
     const { reason, detail } = describe(error)
     const ms = Date.now() - startedAt
 
-    console.error(
-      JSON.stringify({
-        event: 'index.rebuild_failed',
-        trigger: options.trigger,
-        userId: options.userId ?? null,
-        reason,
-        error: error instanceof Error ? `${error.name}: ${error.message}` : 'unknown',
-        ms,
-      }),
-    )
+    // A missing scope or a dead service credential is ours to fix and nobody else's, so it
+    // goes to the alert channel rather than being one more warning in a stream (task 9.6).
+    const fields = {
+      trigger: options.trigger,
+      userId: options.userId ?? null,
+      reason,
+      error: error instanceof Error ? error.name : 'unknown',
+      ms,
+    }
+    if (reason === 'missing_scope') alert('missing_scope', fields)
+    else if (reason === 'service_credential') alert('service_credential', fields)
+    else log.error('index.rebuild_failed', fields)
 
     return { ok: false, reason, detail, ms }
   }

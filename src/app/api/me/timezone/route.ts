@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { requireApiSession } from '@/lib/auth/guard'
 import { shouldUpdateTimeZone } from '@/lib/auth/timezone'
+import { route } from '@/lib/observability/route'
+import { log } from '@/lib/observability/log'
 
 /**
  * `POST /api/me/timezone` — record where this person actually is (task 5.10).
@@ -17,7 +19,7 @@ import { shouldUpdateTimeZone } from '@/lib/auth/timezone'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-export async function POST(request: Request): Promise<NextResponse> {
+export const POST = route(async function POST(request: Request): Promise<NextResponse> {
   const session = await requireApiSession(request)
   if (!session.ok) return session.response
 
@@ -39,9 +41,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     where: { id: session.user.id },
     data: { timezone: timeZone },
   })
-  console.info(
-    JSON.stringify({ event: 'user.timezone_updated', userId: session.user.id, timeZone }),
-  )
+  log.info('user.timezone_updated', { userId: session.user.id, timeZone })
 
   return NextResponse.json({ timeZone, updated: true })
-}
+})

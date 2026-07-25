@@ -3,6 +3,8 @@ import { requireApiSession } from '@/lib/auth/guard'
 import { userProjectsClient } from '@/lib/zoho/factory'
 import { readWeek } from '@/lib/entries/week'
 import { ZohoHttpError, ZohoRateLimitError } from '@/lib/zoho/errors'
+import { route } from '@/lib/observability/route'
+import { log } from '@/lib/observability/log'
 
 /**
  * `GET /api/entries/week` — what this person logged, Sunday to Saturday (task 6.8).
@@ -18,7 +20,7 @@ import { ZohoHttpError, ZohoRateLimitError } from '@/lib/zoho/errors'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-export async function GET(request: Request): Promise<NextResponse> {
+export const GET = route(async function GET(request: Request): Promise<NextResponse> {
   const session = await requireApiSession(request)
   if (!session.ok) return session.response
 
@@ -45,14 +47,11 @@ export async function GET(request: Request): Promise<NextResponse> {
     return NextResponse.json(week)
   } catch (error) {
     const rateLimited = error instanceof ZohoRateLimitError
-    console.warn(
-      JSON.stringify({
-        event: 'week.read_failed',
-        userId: session.user.id,
-        status: error instanceof ZohoHttpError ? error.status : null,
-        rateLimited,
-      }),
-    )
+    log.warn('week.read_failed', {
+      userId: session.user.id,
+      status: error instanceof ZohoHttpError ? error.status : null,
+      rateLimited,
+    })
     return NextResponse.json(
       {
         error: rateLimited ? 'rate_limited' : 'zoho_error',
@@ -63,4 +62,4 @@ export async function GET(request: Request): Promise<NextResponse> {
       { status: rateLimited ? 429 : 502 },
     )
   }
-}
+})

@@ -5,7 +5,9 @@ import { prisma } from '@/lib/db'
 import { requireApiSession } from '@/lib/auth/guard'
 import { consumeChatQuota } from '@/lib/chat/rate-limit'
 import { runChatTurn } from '@/lib/chat/turn'
+import { checkUserMessage } from '@/lib/chat/sanitise'
 import { chatExtractor, userKeyFor } from '@/lib/chat/factory'
+import { route } from '@/lib/observability/route'
 
 /**
  * `POST /api/chat` — one turn (task 7.1).
@@ -18,14 +20,9 @@ export const dynamic = 'force-dynamic'
 /** A slow gateway plus a fallback model is the worst realistic case. */
 export const maxDuration = 90
 
-/** Long enough for a week of work described in one go; short enough not to be an attack. */
-const MAX_MESSAGE_CHARS = 2000
+const bodySchema = z.object({ message: z.string() })
 
-const bodySchema = z.object({
-  message: z.string().trim().min(1).max(MAX_MESSAGE_CHARS),
-})
-
-export async function POST(request: Request): Promise<NextResponse> {
+export const POST = route(async function POST(request: Request): Promise<NextResponse> {
   const session = await requireApiSession(request)
   if (!session.ok) return session.response
 
@@ -50,9 +47,18 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   const parsed = bodySchema.safeParse(body)
-  if (!parsed.success) {
+  // Sanitised and bounded in one place (task 9.3): control characters and bidi overrides
+  // stripped *before* the length check, so invisible padding cannot smuggle a message past it.
+  const checked = parsed.success ? checkUserMessage(parsed.data.message) : null
+  if (!checked?.ok) {
     return NextResponse.json(
-      { error: 'invalid_body', message: 'I need something to work with.' },
+      {
+        error: 'invalid_body',
+        message:
+          checked?.reason === 'too_long'
+            ? 'That is longer than I can take in one go. Split it up.'
+            : 'I need something to work with.',
+      },
       { status: 400 },
     )
   }
@@ -61,11 +67,11 @@ export async function POST(request: Request): Promise<NextResponse> {
     userId: session.user.id,
     displayName: session.user.displayName,
     timezone: session.user.timezone,
-    message: parsed.data.message,
+    message: checked.message,
     defaultBillable: config.DEFAULT_BILL_STATUS === 'Billable',
     backdateWarnDays: config.BACKDATE_WARN_DAYS,
     userKey: userKeyFor(session.user.id),
   })
 
   return NextResponse.json(result)
-}
+})

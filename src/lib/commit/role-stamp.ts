@@ -4,6 +4,7 @@ import type { CommittableEntry } from './commit'
 import { resolveBillingRole } from '@/lib/zoho/billing-role'
 import { resolveCrmUserId } from '@/lib/zoho/crm-users'
 import { stampCustomField } from '@/lib/zoho/timelogs'
+import { log as defaultLog } from '@/lib/observability/log'
 
 /**
  * Stamping `billing_role` onto the logs this app creates (task 6.12, TRNSF-914).
@@ -50,9 +51,7 @@ export type RoleStampDeps = {
 export function createRoleStamper(deps: RoleStampDeps): RoleStamper | undefined {
   if (!deps.field) return undefined
   const field = deps.field
-  const log = deps.logger ?? {
-    info: (event, fields) => console.info(JSON.stringify({ event, ...fields })),
-  }
+  const logger = deps.logger ?? defaultLog
 
   // One lookup per commit, not per entry: the CRM user id is the same for every line, and a
   // ten-entry draft should not read the whole company ten times.
@@ -76,7 +75,7 @@ export function createRoleStamper(deps: RoleStampDeps): RoleStamper | undefined 
     if (!role) {
       // Expected today, and worth counting: when somebody starts assigning resources in CRM
       // this line stops appearing, which is how we will know it began working.
-      log.info('role.unassigned', { projectId: entry.projectId })
+      logger.info('role.unassigned', { projectId: entry.projectId })
       return
     }
 
@@ -87,6 +86,6 @@ export function createRoleStamper(deps: RoleStampDeps): RoleStamper | undefined 
       field,
       value: role.label,
     })
-    log.info('role.stamped', { projectId: entry.projectId, recordId: role.recordId })
+    logger.info('role.stamped', { projectId: entry.projectId, recordId: role.recordId })
   }
 }

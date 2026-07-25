@@ -4,6 +4,7 @@ import { prisma } from '@/lib/db'
 import { requireApiSession } from '@/lib/auth/guard'
 import { userProjectsClient } from '@/lib/zoho/factory'
 import { undoEntry, type UndoRefusal } from '@/lib/commit/undo'
+import { route } from '@/lib/observability/route'
 
 /**
  * `POST /api/entries/{id}/undo` — remove a log this app created today (task 6.7).
@@ -27,7 +28,7 @@ const STATUS: Record<UndoRefusal, number> = {
   zoho_error: 502,
 }
 
-export async function POST(
+export const POST = route(async function POST(
   request: Request,
   context: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
@@ -52,4 +53,4 @@ export async function POST(
   }
 
   return NextResponse.json(result)
-}
+})

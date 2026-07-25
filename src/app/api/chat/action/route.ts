@@ -5,6 +5,8 @@ import { prisma } from '@/lib/db'
 import { requireApiSession } from '@/lib/auth/guard'
 import { consumeChatQuota } from '@/lib/chat/rate-limit'
 import { runChatAction } from '@/lib/chat/turn'
+import { sanitiseUserText } from '@/lib/chat/sanitise'
+import { route } from '@/lib/observability/route'
 
 /**
  * `POST /api/chat/action` — answer one slot from a chip tap (task 7.2).
@@ -28,11 +30,17 @@ const bodySchema = z.object({
   draftId: z.string().min(1),
   entryId: z.string().min(1),
   slot: z.enum(['project', 'task', 'date', 'hours', 'description']),
-  value: z.string().trim().min(1).max(500),
-  echo: z.string().trim().min(1).max(500).optional(),
+  // Sanitised the same way as a chat message: a chip's value is usually a server-issued id,
+  // but a slot can also be answered with free text typed by a person (task 9.3).
+  value: z.string().transform(sanitiseUserText).pipe(z.string().min(1).max(500)),
+  echo: z
+    .string()
+    .transform(sanitiseUserText)
+    .pipe(z.string().min(1).max(500))
+    .optional(),
 })
 
-export async function POST(request: Request): Promise<NextResponse> {
+export const POST = route(async function POST(request: Request): Promise<NextResponse> {
   const session = await requireApiSession(request)
   if (!session.ok) return session.response
 
@@ -70,4 +78,4 @@ export async function POST(request: Request): Promise<NextResponse> {
   })
 
   return NextResponse.json(result)
-}
+})
