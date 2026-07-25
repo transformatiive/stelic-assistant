@@ -33,7 +33,7 @@ import {
   type StoredDraft,
 } from '@/lib/resolve/draft'
 import { nextQuestion, type Question } from '@/lib/resolve/slots'
-import { warningsForDraft } from '@/lib/resolve/warnings'
+import { warningsForDraft, type ExistingLog } from '@/lib/resolve/warnings'
 import { log } from '@/lib/observability/log'
 import { checkScope } from './scope'
 import {
@@ -197,7 +197,10 @@ export async function runChatTurn(
     { conversationId, userId: input.userId, entries },
     now,
   )
-  const { reply, ui } = present(draft.id, entries, extraction.reply, input, context)
+  const existingLogs = nextQuestion(entries)
+    ? []
+    : await fetchExistingLogs(db, input.userId, entries)
+  const { reply, ui } = present(draft.id, entries, extraction.reply, input, context, existingLogs)
 
   const assistant = await say(db, conversationId, 'assistant', reply, now, usage, ui)
   return { conversationId, messageId: assistant.id, reply, ui }
@@ -257,7 +260,10 @@ async function continueDraft(
   )
   await updateDraftEntries(db, draft.id, updated)
 
-  const { reply, ui } = present(draft.id, updated, null, input, context)
+  const existingLogs = nextQuestion(updated)
+    ? []
+    : await fetchExistingLogs(db, input.userId, updated)
+  const { reply, ui } = present(draft.id, updated, null, input, context, existingLogs)
   const assistant = await say(db, conversationId, 'assistant', reply, now, usage, ui)
   return { conversationId, messageId: assistant.id, reply, ui }
 }
@@ -332,7 +338,10 @@ export async function runChatAction(
 
   if (input.echo) await say(db, draft.conversationId, 'user', input.echo, now)
 
-  const { reply, ui } = present(draft.id, updated, null, input, context)
+  const existingLogs = nextQuestion(updated)
+    ? []
+    : await fetchExistingLogs(db, input.userId, updated)
+  const { reply, ui } = present(draft.id, updated, null, input, context, existingLogs)
   const assistant = await say(db, draft.conversationId, 'assistant', reply, now, null, ui)
 
   return {
@@ -375,11 +384,56 @@ async function stale(
 }
 
 /**
+ * Previous successful commits from this app on the dates covered by this draft.
+ *
+ * Used to detect likely duplicates before the confirmation card is shown (design §4.4,
+ * CHAT-9). This is the app's own CommitLog, not a Zoho read: it has no rate-limit cost and
+ * runs on a single indexed query, so the only duplicates it catches are ones logged through
+ * the bot — not through Zoho's own UI. That trade-off is documented and accepted: covering
+ * UI-side entries would require per-task Zoho reads (100 calls / 120s limit), but the most
+ * common duplicate scenario is a person accidentally re-submitting the same bot turn.
+ */
+async function fetchExistingLogs(
+  db: PrismaClient,
+  userId: string,
+  entries: readonly DraftEntry[],
+): Promise<ExistingLog[]> {
+  const dates = entries
+    .filter((e): e is typeof e & { date: { status: 'resolved'; date: string } } =>
+      e.date.status === 'resolved',
+    )
+    .map((e) => new Date(`${e.date.date}T00:00:00.000Z`))
+  if (dates.length === 0) return []
+
+  const rows = await db.commitLog.findMany({
+    where: { userId, status: 'success', logDate: { in: dates } },
+    select: {
+      projectId: true,
+      taskId: true,
+      logDate: true,
+      description: true,
+      zohoLogId: true,
+    },
+  })
+
+  return rows.map((row) => ({
+    projectId: row.projectId,
+    taskId: row.taskId,
+    date: (row.logDate as Date).toISOString().slice(0, 10),
+    description: row.description,
+    logId: row.zohoLogId ?? undefined,
+  }))
+}
+
+/**
  * The reply and the UI for a draft, whichever state it is in.
  *
  * One question at a time, in entry order — jumping between entries ("which project for
  * Monday? and for Tuesday? and how long on Monday?") is how a two-entry conversation becomes
  * confusing. Only when nothing is left to ask does the confirmation card appear.
+ *
+ * `existingLogs` comes from `fetchExistingLogs` — the app's own CommitLog for the entry
+ * dates. Passing it activates the "possible duplicate" warning (design §4.4, CHAT-9).
  */
 function present(
   draftId: string,
@@ -387,6 +441,7 @@ function present(
   modelReply: string | null,
   input: { backdateWarnDays: number; timezone: string },
   context: ResolveContext,
+  existingLogs: readonly ExistingLog[] = [],
 ): { reply: string; ui: ChatUi } {
   const question = nextQuestion(entries)
   if (question) {
@@ -400,6 +455,7 @@ function present(
   const warnings = warningsForDraft(entries, {
     today: todayFor(context),
     backdateWarnDays: input.backdateWarnDays,
+    existingLogs,
   })
 
   return {

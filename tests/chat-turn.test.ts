@@ -144,6 +144,94 @@ describe('a message that resolves completely', () => {
   })
 })
 
+describe('duplicate-detection warning on the confirmation card', () => {
+  // The "possible duplicate" warning (design §4.4, CHAT-9) fires when a CommitLog row for the
+  // same user / project / task / date already exists with a similar description. Without this
+  // it could not fire at all, because existing logs were never fetched before this change.
+  const extraction: Extraction = {
+    kind: 'submit_time_entries',
+    reply: 'Got it.',
+    entries: [
+      {
+        project_query: 'clayco',
+        date_expression: 'yesterday',
+        hours: 8,
+        description: 'schedule updates and progress meeting',
+        billable: null,
+        charge_code_hint: null,
+      },
+    ],
+  }
+
+  it('warns when a very similar entry is already in the commit log', async () => {
+    const db = new FakeDb()
+    seedIndex(db)
+    // Plant a previous successful commit for the same project/task/date with a near-identical
+    // description (≥ 0.8 trigram similarity).
+    db.commitLogs.push({
+      id: 'prior_commit',
+      userId: 'user_1',
+      projectId: '2620762000000790022',
+      status: 'success',
+      logDate: new Date('2026-07-21T00:00:00.000Z'), // yesterday
+      taskId: 'task_1',
+      description: 'schedule updates and progress meeting',
+      zohoLogId: 'zoho_log_99',
+    })
+
+    const result = await runChatTurn(db.client, extractorReturning(extraction), {
+      ...turnInput,
+      message: '8h clayco yesterday, schedule updates and progress meeting',
+    })
+
+    expect(result.ui.kind).toBe('confirmation')
+    const ui = result.ui as Extract<ChatUi, { kind: 'confirmation' }>
+    const entry = ui.entries[0]!
+    expect(entry.warnings.some((w) => w.kind === 'possible_duplicate')).toBe(true)
+  })
+
+  it('does not warn when the description is genuinely different', async () => {
+    const db = new FakeDb()
+    seedIndex(db)
+    db.commitLogs.push({
+      id: 'prior_commit_2',
+      userId: 'user_1',
+      projectId: '2620762000000790022',
+      status: 'success',
+      logDate: new Date('2026-07-21T00:00:00.000Z'),
+      taskId: 'task_1',
+      description: 'site visit and rebar inspection',
+      zohoLogId: 'zoho_log_88',
+    })
+
+    const result = await runChatTurn(db.client, extractorReturning(extraction), {
+      ...turnInput,
+      message: '8h clayco yesterday, schedule updates and progress meeting',
+    })
+
+    expect(result.ui.kind).toBe('confirmation')
+    const ui = result.ui as Extract<ChatUi, { kind: 'confirmation' }>
+    const entry = ui.entries[0]!
+    expect(entry.warnings.some((w) => w.kind === 'possible_duplicate')).toBe(false)
+  })
+
+  it('does not warn when there are no prior commits on those dates', async () => {
+    const db = new FakeDb()
+    seedIndex(db)
+    // No commit log entries at all.
+
+    const result = await runChatTurn(db.client, extractorReturning(extraction), {
+      ...turnInput,
+      message: '8h clayco yesterday, schedule updates and progress meeting',
+    })
+
+    expect(result.ui.kind).toBe('confirmation')
+    const ui = result.ui as Extract<ChatUi, { kind: 'confirmation' }>
+    const entry = ui.entries[0]!
+    expect(entry.warnings.some((w) => w.kind === 'possible_duplicate')).toBe(false)
+  })
+})
+
 describe('a message with something missing', () => {
   it('asks one question, not three', async () => {
     const db = new FakeDb()

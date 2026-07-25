@@ -422,7 +422,12 @@ export class FakeDb {
       where,
       take,
     }: {
-      where: { userId: string; status: string; completedAt?: { gte: Date } }
+      where: {
+        userId: string
+        status: string
+        completedAt?: { gte: Date }
+        logDate?: { in: Date[] }
+      }
       take?: number
     }) =>
       this.commitLogs
@@ -431,7 +436,9 @@ export class FakeDb {
             r.userId === where.userId &&
             r.status === where.status &&
             (where.completedAt === undefined ||
-              (r.completedAt != null && r.completedAt >= where.completedAt.gte)),
+              (r.completedAt != null && r.completedAt >= where.completedAt.gte)) &&
+            (where.logDate === undefined ||
+              where.logDate.in.some((d) => r.logDate?.getTime() === d.getTime())),
         )
         .sort((a, b) => (b.completedAt?.getTime() ?? 0) - (a.completedAt?.getTime() ?? 0))
         .slice(0, take ?? undefined),

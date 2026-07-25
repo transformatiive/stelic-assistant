@@ -424,6 +424,13 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
       drafting in the morning and three in the afternoon are two honest entries. A test
       asserts that 23 hours across two entries produces **no** warning, so the abandoned cap
       cannot creep back in as a "helpful" nudge
+      **Updated 2026-07-25:** the warning logic existed and was tested, but `warningsForDraft`
+      was called without `existingLogs` in `lib/chat/turn.ts`, so the "possible duplicate"
+      warning never fired in production. Fixed: the confirmation card now queries `CommitLog`
+      for successful entries on the same dates and passes them in. This catches duplicates
+      logged via the bot (the most common case); UI-logged entries require per-task Zoho reads
+      (rate-limited) so are not checked — the trade-off is documented. Three new tests in
+      `chat-turn.test.ts` assert the warning fires when expected and not otherwise
 - [x] 5.9 Store each user's Zoho **zuid** alongside their portal user id, from `login_id` on
       `GET /restapi/portals/`. The `owner` parameter on a time-log write takes a zuid, not a
       zpuid (spike 1.4), so the commit pipeline needs it on the `User` row
