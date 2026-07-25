@@ -63,8 +63,11 @@ export type CommitLogRow = {
 
 export type ServiceTokenRow = {
   id: string
-  accessTokenEncrypted: string
-  expiresAt: Date
+  accessTokenEncrypted: string | null
+  expiresAt: Date | null
+  refreshTokenEncrypted?: string | null
+  connectedByUserId?: string | null
+  connectedAt?: Date | null
 }
 
 export class FakeDb {

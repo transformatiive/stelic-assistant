@@ -5,7 +5,9 @@ import { prisma } from '@/lib/db'
 import { loadSession } from '@/lib/auth/store'
 import { readCookie } from '@/lib/auth/request'
 import { StelicMark } from '@/components/stelic-mark'
+import { serviceCredentialState } from '@/lib/auth/service-connect'
 import { IndexWarmer } from './index-warmer'
+import { ServiceCredentialBanner } from './service-credential'
 import { SignOutButton } from './sign-out-button'
 
 /**
@@ -15,7 +17,11 @@ import { SignOutButton } from './sign-out-button'
  */
 export const dynamic = 'force-dynamic'
 
-export default async function Home() {
+export default async function Home({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>
+}) {
   const config = loadConfig()
   const cookieHeader = (await headers()).get('cookie') ?? ''
   const lookup = await loadSession(
@@ -28,6 +34,11 @@ export default async function Home() {
   if (lookup.status !== 'valid') redirect('/login')
 
   const { user } = lookup
+  const [service, params] = await Promise.all([
+    serviceCredentialState(prisma),
+    searchParams,
+  ])
+  const outcome = Array.isArray(params.service) ? params.service[0] : params.service
 
   return (
     <main className="mx-auto flex min-h-dvh max-w-md flex-col gap-6 p-6">
@@ -44,7 +55,11 @@ export default async function Home() {
         <SignOutButton />
       </header>
 
-      <IndexWarmer />
+      {service.connected ? (
+        <IndexWarmer />
+      ) : (
+        <ServiceCredentialBanner outcome={outcome} />
+      )}
 
       <p className="text-sm opacity-70">
         Chat is not wired up yet. Sign-in, sessions and the Zoho credential plumbing are
