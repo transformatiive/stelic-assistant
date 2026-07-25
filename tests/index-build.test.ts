@@ -300,3 +300,64 @@ describe('a portal where the client name rides on the project', () => {
     expect(rows[0]!.projectId).toBe('2620762000000790022')
   })
 })
+
+describe('one unreadable project does not lose the rest', () => {
+  // Seen live: after ~60 projects one answered 400 and the whole rebuild aborted, leaving the
+  // index empty. A portal of 145 projects will always contain one oddity.
+  const ROUTES = {
+    '/projects/?': {
+      projects: [
+        { id_string: 'p-good', name: 'Good', status: 'active' },
+        { id_string: 'p-bad', name: 'Bad', status: 'active' },
+        { id_string: 'p-also-good', name: 'Also good', status: 'active' },
+      ],
+    },
+    '/projects/p-good/tasks/': { tasks: [{ id_string: 't1', name: 'Design' }] },
+    '/projects/p-also-good/tasks/': { tasks: [{ id_string: 't2', name: 'Build' }] },
+    'crm/v8/Deals': { data: [] },
+  }
+
+  function portalWithBadProject() {
+    const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.includes('/projects/p-bad/tasks/')) {
+        return new Response(JSON.stringify({ code: 6401, message: 'nope' }), {
+          status: 400,
+        })
+      }
+      const key = Object.keys(ROUTES).find((k) => url.includes(k))
+      return new Response(JSON.stringify(key ? ROUTES[key as keyof typeof ROUTES] : {}), {
+        headers: { 'content-type': 'application/json' },
+      })
+    })
+    const make = (base: string) =>
+      new ZohoClient({ baseUrl: base, tokens: TOKENS, fetchImpl, maxRateLimitRetries: 0 })
+    return {
+      projects: make('https://projectsapi.zoho.com/restapi/portal/911636649/'),
+      crm: make('https://www.zohoapis.com/crm/v8/'),
+    }
+  }
+
+  it('indexes every project, including the one whose tasks failed', async () => {
+    const { rows, stats } = await buildProjectIndex(portalWithBadProject())
+
+    expect(rows.map((r) => r.projectId)).toEqual(['p-good', 'p-bad', 'p-also-good'])
+    expect(stats.projectsWithTaskFailures).toBe(1)
+    expect(stats.projectsWithTasksFetched).toBe(2)
+  })
+
+  it('leaves the failed project matchable, just without charge codes', async () => {
+    const { rows } = await buildProjectIndex(portalWithBadProject())
+    const bad = rows.find((r) => r.projectId === 'p-bad')!
+    expect(bad.projectName).toBe('Bad')
+    expect(bad.chargeCodes).toEqual([])
+  })
+
+  it('does not fail silently — the caller is told which project', async () => {
+    const failures: string[] = []
+    await buildProjectIndex(portalWithBadProject(), {
+      onTaskFailure: (project) => failures.push(project.id),
+    })
+    expect(failures).toEqual(['p-bad'])
+  })
+})

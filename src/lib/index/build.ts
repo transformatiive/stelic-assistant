@@ -110,6 +110,8 @@ export type BuildOptions = {
    */
   maxProjectsWithTasks?: number
   onProgress?: (done: number, total: number) => void
+  /** Called per project whose task list could not be read, so the failure is not silent. */
+  onTaskFailure?: (project: ZohoProject, error: unknown) => void
 }
 
 export type BuildResult = {
@@ -119,6 +121,8 @@ export type BuildResult = {
     projectsSeen: number
     projectsIndexed: number
     projectsWithTasksFetched: number
+    /** Projects whose task list could not be read. Indexed anyway, without charge codes. */
+    projectsWithTaskFailures: number
     dealsResolved: number
     dealsRequested: number
     /** How many rows got a client name — from the project itself or from CRM. */
@@ -153,14 +157,24 @@ export async function buildProjectIndex(
   const limit = options.maxProjectsWithTasks ?? projects.length
   const rows: IndexedProjectRow[] = []
   let tasksFetched = 0
+  let taskFailures = 0
 
   for (const [position, project] of projects.entries()) {
     const deal = project.crmDealId ? deals.get(project.crmDealId) : undefined
 
     let chargeCodes: ChargeCode[] = []
     if (position < limit) {
-      chargeCodes = toChargeCodes(await listTasks(clients.projects, project.id))
-      tasksFetched += 1
+      try {
+        chargeCodes = toChargeCodes(await listTasks(clients.projects, project.id))
+        tasksFetched += 1
+      } catch (error) {
+        // One unreadable project must not cost the other 144. Seen live: after ~60 projects
+        // one answered 400 and the whole rebuild aborted, leaving the index empty.
+        // The project keeps its row and stays matchable; it just has no charge codes, which
+        // the task resolver already reports as "none available" and asks about.
+        taskFailures += 1
+        options.onTaskFailure?.(project, error)
+      }
     }
 
     rows.push({
@@ -184,6 +198,7 @@ export async function buildProjectIndex(
       projectsSeen: allProjects.length,
       projectsIndexed: rows.length,
       projectsWithTasksFetched: tasksFetched,
+      projectsWithTaskFailures: taskFailures,
       dealsResolved: deals.size,
       dealsRequested: new Set(dealIds).size,
       projectsWithAccountName: rows.filter((r) => r.accountName).length,
