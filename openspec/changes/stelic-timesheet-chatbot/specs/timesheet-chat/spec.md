@@ -391,11 +391,21 @@ timezone) as the commit. It SHALL refuse anything else and point the user to Zoh
 - **WHEN** an undo is attempted for it
 - **THEN** it is refused — the app only deletes what it has a `CommitLog` row for
 
-#### Scenario: Approved log
+#### Scenario: Approval status alone does not block undo
 
-- **GIVEN** a log whose timesheet has been approved
+- **GIVEN** an app-created log, which Zoho marks `approval_status: "Approved"` at creation
+  with no human approving anything (verified, spike 1.4)
+- **WHEN** the user undoes it the same day
+- **THEN** it is deleted normally
+- **AND** the undo guard SHALL NOT key off `approval_status`, because every app-created log
+  carries it and keying off it would disable undo entirely
+
+#### Scenario: Log inside an already-billed period
+
+- **GIVEN** a log whose date falls in a period the invoice pipeline has already billed
 - **WHEN** undo is attempted
-- **THEN** it is refused with an explanation
+- **THEN** it is refused with an explanation, so deleting it cannot orphan a pointer in the
+  billing app's ledger (task 6.10)
 
 ---
 

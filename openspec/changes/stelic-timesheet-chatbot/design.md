@@ -132,30 +132,51 @@ with the users scope added.
 
 ---
 
-### Decision (PROVISIONAL — gated on spike 1.4): who owns an API-created time log
+### Decision (RESOLVED by spike 1.4, 2026-07-25): a service token CAN own-set a time log
 
-**The question.** Can a portal-admin token create a time log owned by a different user? If
-yes, the service credential could do the writes too and per-user OAuth becomes optional. If
-no, per-user OAuth is mandatory and is not a security preference but a functional
-requirement.
+**The question was.** Can a portal-admin token create a time log owned by a different user?
 
-**Current evidence points to *no*.** The documented create-log parameters are `date`,
-`hours`, `bill_status` and `notes` — there is no owner field — and Zoho's own support
-position on logging time for other portal members has been that it is not supported by
-design. That evidence is indicative, not conclusive: it predates the current API version and
-was not tested against this portal.
+**Answer: yes.** Tested against portal `911636649` on `Transformatiive — TEST Deal 30 -
+disregard`, task *Project Execution*, with the Stelic service credential. Four 15-minute
+`Non Billable` logs were created and all four deleted; the task is verifiably back to zero
+logs.
 
-**So it gets tested before anything is built on it.** Task 1.4 runs the experiment against
-the real portal with the real vault token. The result decides the auth path:
+| Attempt | `owner` value | Result |
+|---|---|---|
+| No `owner` | — | `201` — owned by the token holder |
+| `owner` = another user's **zpuid** | `2620762000000124007` | `400` `6401` "The user assigned does not belong to this project" |
+| `owner` = token holder's own **zpuid** | `2620762000000448001` | `400` `6401` — same error, so this is an **id-format** failure, not a membership one |
+| `owner` = token holder's own **zuid** | `917530087` | `201` |
+| `owner` = Brook Bolger's **zuid** | `906043724` | **`201`, `owner_name: "Brook Bolger"`** |
+| `owner` = Mike Bograd's **zuid** | `906348684` | **`201`, `owner_name: "Mike Bograd"`** |
 
-- **Cannot set owner** → per-user OAuth as specified. Task group 2 stands as written.
-- **Can set owner** → the service credential may do the writes, and login can be simplified
-  (an app-managed identity becomes viable). Task group 2 shrinks; task group 6 gains an owner
-  parameter; §8's audit requirements get *stricter*, because Zoho's own audit trail would then
-  attribute every log to the service account and ours becomes the only record of who actually
-  said what.
+**The `owner` parameter takes a `zuid`, not a `zpuid`.** A zpuid produces the misleading
+"does not belong to this project" error even for a user who plainly does. That one detail is
+what made the prior evidence look like "not supported".
 
-Do not start task group 2 before 1.4 has an answer.
+**Zoho keeps its own attribution.** Every log carries both `owner_id`/`owner_name` (whose
+timesheet it is) and `added_by: { zpuid, name, zuid }` (who called the API), plus
+`added_via: "api"`. The concern that a service-token write would erase who actually did it is
+therefore unfounded — Zoho records both sides, and our `CommitLog` adds the originating
+sentence on top.
+
+**Consequences.**
+1. **Per-user OAuth is no longer a functional requirement.** It remains one option, but the
+   service credential can write a correctly-owned log for anybody. Task group 2 can shrink to
+   an app-managed identity, and the read/write credential split in the decision above
+   collapses to a single service credential.
+2. **Task group 6 gains an `owner` parameter**, carrying the target user's **zuid**. The
+   `User` model needs that zuid stored alongside `zoho_projects_user_id`.
+3. **The n8n-broker option becomes fully viable** — see the alternative in the decision above.
+   With no per-user tokens, every Zoho call is a service call, so nothing forces a Zoho
+   credential into this app's environment at all.
+4. **Audit requirements do not need tightening** the way this section previously assumed,
+   because `added_by` survives.
+
+**Still to decide (not blocked, but a real choice).** Per-user OAuth buys permission
+enforcement by Zoho and free offboarding; an app-managed identity buys a simpler login and
+works for staff without a Zoho seat (open question 2). Now that both are possible, this is a
+product decision rather than a technical constraint.
 
 ---
 
@@ -555,25 +576,54 @@ automatically.
 Reads use the vault service credential; writes use the signed-in user's token (see §2).
 Zoho API domain for CRM/Books calls: `https://www.zohoapis.com` (US DC).
 
-| Purpose | Call | Credential |
+All rows below were exercised against the live portal on 2026-07-25 (spike 1.4) unless
+marked otherwise.
+
+| Purpose | Call | Verified |
 |---|---|---|
-| Create time log | `POST projects/{projectId}/tasks/{taskId}/logs/` — `date` (`MM-DD-YYYY`), `hours` (`hh:mm`), `bill_status` (`Billable`/`Non Billable`), `notes` | user |
-| Delete time log (undo) | `DELETE projects/{projectId}/tasks/{taskId}/logs/{logId}/` | user |
-| My logs for a range | `GET logs?users_list={userId}&view_type=custom_date&custom_date={start_date:MM-DD-YYYY,end_date:MM-DD-YYYY}&bill_status=all&component_type=task` | service |
-| Projects | `GET projects/` (paged, `index`/`range`) | service |
-| Tasks in a project | `GET projects/{projectId}/tasks/` (paged) | service |
-| Portal users | `GET users/` — needed for the email → user id mapping; verify scope (task 0.2) | service |
+| Create time log | `POST projects/{projectId}/tasks/{taskId}/logs/` — form-encoded `date` (`MM-DD-YYYY`), `hours` (`hh:mm`), `bill_status` (`Billable`/`Non Billable`), `notes`, and **`owner` (a `zuid`)** | ✅ `201` |
+| Delete time log (undo) | `DELETE projects/{projectId}/tasks/{taskId}/logs/{logId}/` → `{"response":"Timesheet log Deleted Successfully"}` | ✅ `200` |
+| Logs on a task | `GET projects/{projectId}/tasks/{taskId}/logs/` — returns `timelogs.tasklogs[]` plus `total_log_hours`; **`204` with an empty body when there are none** | ✅ `200`/`204` |
+| Projects | `GET projects/?index=1&range=200` | ✅ `200`, 145 projects |
+| Tasks in a project | `GET projects/{projectId}/tasks/?index=1&range=100` | ✅ `200` |
+| Portal users | `GET users/` | ❌ **`403` `{"code":6403,"message":"Invalid OAuth scope."}`** |
+| Project users | `GET projects/{projectId}/users/` | ❌ **`403`, same** — no workaround at project scope |
+| My logs for a range | `GET logs?users_list=…&view_type=custom_date&custom_date=…` | ❌ **`400` `{"code":6891,"message":"Given URL is wrong"}`** — contract unknown, see below |
 
-> **Spike first (task 1.4):** whether a log can be created with an owner other than the token
-> holder (decides the auth path — see §2), and whether API-created logs trigger the
-> `stampRoleOnTimelog` workflow. If they do not, `billing_role` must be written by this app
-> after creation, and that becomes a new task.
+**Time-log response shape** (what a created log returns, and what the app must read):
+`id_string`, `owner_id` (a zuid string), `owner_name`, `added_by: { zpuid, name, zuid }`,
+`added_via: "api"`, `log_date` (`MM-DD-YYYY`), `hours` + `minutes` + `total_minutes` +
+`hours_display` (`"00:15"`), `bill_status`, `approval_status`, `approver_name`,
+`custom_fields[]`, `task: { id_string, name }`, `task_list: { id, name }`, `notes`.
 
-**New evidence for the spike (found 2026-07-25).** The table above assumes the v1 endpoint
-`POST restapi/.../tasks/{taskId}/logs/`, whose documented parameters carry no owner field —
-the basis for the design's provisional "cannot set owner". But an **active production n8n
-workflow, `Stelic Timelog Bulk Loader`, posts to a different endpoint on a newer API
-version**:
+**Use `id_string`, never `id`.** Zoho returns both, and the numeric `id` exceeds
+`Number.MAX_SAFE_INTEGER`, so JSON parsing silently corrupts it — observed
+`id: 2620762000000790000` against `id_string: "2620762000000790022"`. Every project, task and
+log identifier in this app is a string taken from `id_string`.
+
+**Rate limiting.** Responses carry `ratelimit: 100`, `ratelimit-window: 120`,
+`ratelimit-window-unit: seconds`, `ratelimit-remaining`. The client's backoff should read
+these rather than guess.
+
+**API-created logs are born approved.** Every log created through the API came back
+`approval_status: "Approved"` with `approver_name` = the calling user, without anyone
+approving anything. This has a direct consequence for undo — see the timesheet-chat spec,
+CHAT-11.
+
+**The week read-back has no verified contract yet.** Both attempted forms of the portal-wide
+`/logs/` call returned `6891 "Given URL is wrong"`. Task 6.8 cannot be built against §5 as
+previously written; the working alternative is per-project or per-task log reads, which are
+verified above. Raised as task 6.11.
+
+> **Spike 1.4 — done, 2026-07-25.** (a) A log **can** be created with an owner other than the
+> token holder, using `owner=<zuid>` (see §2). (b) An API-created log does **not** get
+> `billing_role` stamped — `custom_fields` came back `[]` both immediately and on re-read, so
+> `stampRoleOnTimelog` does not fire for API writes. This app must therefore write
+> `billing_role` itself after creation; raised as task 6.12. (c) `DELETE` removes a log
+> cleanly, confirmed by re-reading the task to zero logs.
+
+**On the v3 bulk endpoint.** The active production workflow `Stelic Timelog Bulk Loader`
+posts to a newer API version:
 
 ```
 POST https://projectsapi.zoho.com/api/v3/portal/911636649/addbulktimelogs
@@ -581,11 +631,11 @@ Content-Type: application/x-www-form-urlencoded
 log_object=<url-encoded JSON array of logs>
 ```
 
-A *bulk* timesheet loader is hard to explain without per-log ownership, so v3 may well accept
-an owner that v1 does not — which is precisely what 1.4(a) asks and what the provisional
-decision flagged as untested against the current API. The spike must therefore test **v3
-`addbulktimelogs` as well as v1**, not just v1. No execution history is retained for that
-workflow, so the `log_object` field shape has to come from the spike itself.
+This turned out not to matter: v1 accepts `owner` directly, so the bulk endpoint is not
+needed for ownership. It is still the right call for a future batch import, but its contract
+is only partly known — it rejected the spike payload first for a missing `type` field
+(`LESS_THAN_MIN_OCCURANCE`) and then for `date` (`PATTERN_NOT_MATCHED`), so its date format
+differs from v1's `MM-DD-YYYY`. Out of scope until something needs bulk writes.
 
 **Where the credential actually lives.** The vault (`TRNSF-600`) returns metadata and token
 *hints* only — `refresh_token_hint`, no client id or secret. The usable Stelic Zoho
