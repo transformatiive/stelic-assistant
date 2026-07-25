@@ -7,9 +7,13 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
 
 ## 0. Pre-flight (blocking — do before writing code)
 
-- [ ] 0.1 Pull the Stelic credential from the vault: `GET {VAULT_URL}?action=get&epic_key=TRNSF-600`.
-      Confirms portal `911636649`, domain `https://www.zohoapis.com`, Books org `911636705`,
-      and the broad refresh token. **Reuse it — do not register a new service credential**
+- [~] 0.1 Pull the Stelic credential. **The vault returns metadata and token *hints* only**
+      (`refresh_token_hint`, no client id or secret) — confirmed portal `911636649`, domain
+      `https://www.zohoapis.com`, Books org `911636705`, scopes, and deploy capabilities.
+      The usable credential is the n8n credential `Stelic Credentials` (`81cg7LlsTQCWMht1`,
+      `oAuth2Api`), whose values n8n does not expose over its API. **Remaining:** extract
+      client id / secret / refresh token from it into Railway variables, since the app reads
+      credentials from its own environment (`design.md §7`). Do not register a new one
 - [ ] 0.2 Verify the service token can call `GET /portal/911636649/users/`. The vault scope
       string has no `ZohoProjects.users.*`; if `portals.ALL` does not cover it, re-consent the
       token with the users scope added and update the vault entry
@@ -36,15 +40,25 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
       — 10 tables in `prisma/migrations/20260725000000_init`. Prisma 7 takes the connection
       through `prisma.config.ts` + a driver adapter rather than a schema `url`. The migration
       is **generated but not applied**: there is no database until task 1.3.
-- [ ] 1.3 Provision a **new** Railway project (`Stelic Assistant`) with its own app service
+- [~] 1.3 Provision a **new** Railway project (`Stelic Assistant`) with its own app service
       and its own Postgres — not inside the existing `Stelic Financials` project, which is a
-      different product (`design.md §2`). Deploy the empty app to a stable HTTPS domain; that
-      domain is open question 9 and is a prerequisite for both PWA installability and the
-      OAuth redirect URI
+      different product (`design.md §2`).
+      — Done: project `861f18e1-a732-4f78-a084-312ba41999f1`, Postgres service, app service
+      bound to this repo, and a stable origin **`https://stelic-assistant-production.up.railway.app`**
+      (open question 9 resolved — a generated Railway domain, swappable for a custom one only
+      before users install the PWA). Non-secret env vars set, `DATABASE_URL` referencing the
+      Postgres service.
+      **Remaining:** the credentials from 0.1/0.3/0.5, then a first green deploy — the app
+      fails fast at boot without them, by design (task 1.6). Switch the service's branch from
+      the feature branch to `main` when this PR merges
 - [ ] 1.4 **DECISIVE SPIKE — run this before task group 2.** Against the real portal with the
       vault service token and a test task:
-      (a) can a log be created owned by a *different* user (any `owner`-style parameter, any
-      API version)? → decides whether per-user OAuth is mandatory (`design.md §2`);
+      (a) can a log be created owned by a *different* user? Test **both** the v1
+      `restapi/.../tasks/{taskId}/logs/` endpoint and **v3
+      `POST /api/v3/portal/{id}/addbulktimelogs`** with `log_object` — the v3 bulk endpoint is
+      already in production use by the `Stelic Timelog Bulk Loader` n8n workflow and is the
+      likelier place an owner field exists (`design.md §5`). → decides whether per-user OAuth
+      is mandatory (`design.md §2`);
       (b) does an API-created log trigger `stampRoleOnTimelog` and populate `billing_role`?
       (c) does `DELETE` remove it cleanly?
       Record the answers in `design.md §5`, resolve the provisional decision, and raise a new
@@ -147,6 +161,10 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
 - [ ] 6.7 Undo: `/api/entries/{id}/undo` with same-day and app-origin guards; refuse approved
       logs
 - [ ] 6.8 Week read-back: `/api/entries/week` grouped by day with total
+- [ ] 6.10 Undo guard against already-billed logs: refuse undo when the log's date falls in a
+      period the invoice pipeline has already billed, so deleting it cannot orphan a pointer
+      in the billing app's `invoiced_logs` ledger (`design.md §2`). Determine the boundary
+      from Zoho or configuration — this app must not read the billing database
 - [ ] 6.9 Tests for double-confirm, partial failure, Zoho unavailable, expired draft
 
 ## 7. Chat API

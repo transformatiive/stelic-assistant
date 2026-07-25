@@ -302,6 +302,29 @@ The app therefore reaches Zoho and CRM over their APIs like any other client. It
 database-level relationship with the billing app, and it never writes to the `invoiced_logs`
 ledger or the n8n invoice pipeline (see `project.md` → *Integration surface*).
 
+**Verified against the billing app's schema** (`transformatiive/Stelic-Billing-Period`,
+`lib/db/src/schema`, read 2026-07-25). Its database holds six tables and **not one of them
+stores a time entry**:
+
+| Table | What it holds |
+|---|---|
+| `invoiced_logs` | An idempotency ledger: Zoho time-log `id_string` → billing run + Books project + `invoiced_at`. A **pointer**, no hours, date or description. Its own comment: the source of truth for "already invoiced", because Zoho's `bill_status` cannot be set to `Billed`. |
+| `profitability_lines` | Per-person, per-run **aggregates** — hours × rates → revenue and cost. Derived output of a billing run. |
+| `resource_projections` | Monthly projected hours plus `actual_hours` (approved timesheet hours) as a capacity overlay. Aggregate. |
+| `billing_runs`, `batch_runs`, `financial_inputs` | Run metadata, guard findings, and monthly KPI snapshots. |
+
+So time is authored in exactly one place — Zoho Projects — and the billing app references
+logs by id and derives aggregates from them. A log this app creates in Zoho is therefore
+already "in the same place" as every other log, and flows into billing with no second write
+and nothing to keep in sync. Task 10.6 confirms that end to end.
+
+**Known interaction, undo vs. the ledger.** `invoiced_logs` is keyed by the Zoho log id. If
+this app's same-day undo deleted a log that a billing run had already swept up, the ledger
+would keep a pointer to a log that no longer exists. The window is small — undo is same-day
+and billing runs per period — and this app must not read the billing database to check. The
+guard belongs on the Zoho side: refuse undo for a log whose date falls in a period already
+billed. Raised as task 6.10.
+
 **Separate database does not mean separate time records.** Zoho Projects is the single system
 of record for time. A bot-created log is written to portal `911636649` exactly as the Zoho UI
 would write it — same task, same owner, same `bill_status`, and still triggering
@@ -535,6 +558,32 @@ Zoho API domain for CRM/Books calls: `https://www.zohoapis.com` (US DC).
 > holder (decides the auth path — see §2), and whether API-created logs trigger the
 > `stampRoleOnTimelog` workflow. If they do not, `billing_role` must be written by this app
 > after creation, and that becomes a new task.
+
+**New evidence for the spike (found 2026-07-25).** The table above assumes the v1 endpoint
+`POST restapi/.../tasks/{taskId}/logs/`, whose documented parameters carry no owner field —
+the basis for the design's provisional "cannot set owner". But an **active production n8n
+workflow, `Stelic Timelog Bulk Loader`, posts to a different endpoint on a newer API
+version**:
+
+```
+POST https://projectsapi.zoho.com/api/v3/portal/911636649/addbulktimelogs
+Content-Type: application/x-www-form-urlencoded
+log_object=<url-encoded JSON array of logs>
+```
+
+A *bulk* timesheet loader is hard to explain without per-log ownership, so v3 may well accept
+an owner that v1 does not — which is precisely what 1.4(a) asks and what the provisional
+decision flagged as untested against the current API. The spike must therefore test **v3
+`addbulktimelogs` as well as v1**, not just v1. No execution history is retained for that
+workflow, so the `log_object` field shape has to come from the spike itself.
+
+**Where the credential actually lives.** The vault (`TRNSF-600`) returns metadata and token
+*hints* only — `refresh_token_hint`, no client id or secret. The usable Stelic Zoho
+credential is the n8n credential **`Stelic Credentials`** (`81cg7LlsTQCWMht1`, `oAuth2Api`),
+and n8n does not expose credential values over its API. Consequences: the spike runs as an
+n8n workflow using that credential; and task 0.1 is not a vault `GET` but "extract the client
+id / secret / refresh token from the n8n credential into Railway variables", since
+`design.md §7` requires the app to read them from its own environment.
 
 ### Zoho CRM (v8)
 
