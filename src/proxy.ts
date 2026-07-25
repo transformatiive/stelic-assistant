@@ -23,7 +23,15 @@ const PUBLIC_PATHS = ['/login']
  * 401 before the route ever ran, so the schedule could never have worked.
  */
 const PUBLIC_PREFIXES = ['/api/auth/', '/api/cron/', '/_next/', '/icons/']
-const PUBLIC_FILES = ['/manifest.webmanifest', '/favicon.ico', '/robots.txt', '/sw.js']
+const PUBLIC_FILES = [
+  '/manifest.webmanifest',
+  '/favicon.ico',
+  '/robots.txt',
+  '/sw.js',
+  // Read by iOS before there is any session — an *Add to Home Screen* from the login page
+  // would otherwise get a redirect where it expected a PNG, and fall back to a screenshot.
+  '/apple-touch-icon.png',
+]
 
 // Read directly: this runs in the edge runtime, where `loadConfig` (and the Node
 // crypto it pulls in) is not available. The default matches `config.ts`.
