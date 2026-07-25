@@ -18,9 +18,12 @@ import type { Bubble } from '@/lib/chat/transcript'
  */
 export function MessageList({
   bubbles,
+  busy = false,
   renderUi,
 }: {
   bubbles: readonly Bubble[]
+  /** A turn is in flight: show the typing indicator so the wait reads as work, not silence. */
+  busy?: boolean
   renderUi: (bubble: Bubble) => ReactNode
 }) {
   const scroller = useRef<HTMLDivElement>(null)
@@ -44,7 +47,7 @@ export function MessageList({
   useEffect(() => {
     if (!pinned) return
     bottom.current?.scrollIntoView({ block: 'end' })
-  }, [bubbles.length, pinned])
+  }, [bubbles.length, busy, pinned])
 
   const newest = bubbles.at(-1)
 
@@ -77,13 +80,33 @@ export function MessageList({
               </div>
             </li>
           ))}
+          {busy ? (
+            <li className="flex justify-start" data-testid="thinking">
+              {/* Feedback that the bot is working (field report, second round): a turn can now
+                  take a few seconds — two model calls on a continuation — and a silent screen
+                  reads as broken. Dots, not words: no fixed sentence survives every kind of
+                  turn (extracting, classifying, matching), and a wrong one is worse than none. */}
+              <div className="flex items-center gap-1 rounded-2xl rounded-bl-sm border border-stelic-navy/10 bg-white px-4 py-3 dark:border-white/10 dark:bg-white/10">
+                <span className="sr-only">Thinking…</span>
+                {[0, 150, 300].map((delay) => (
+                  <span
+                    key={delay}
+                    aria-hidden="true"
+                    className="size-1.5 animate-bounce rounded-full bg-stelic-navy/50 motion-reduce:animate-none dark:bg-white/60"
+                    style={{ animationDelay: `${delay}ms` }}
+                  />
+                ))}
+              </div>
+            </li>
+          ) : null}
         </ul>
         <div ref={bottom} />
       </div>
 
-      {/* Only the newest reply, announced politely, with focus left where it was. */}
+      {/* Only the newest reply, announced politely, with focus left where it was. The busy
+          announcement reassures a screen-reader user the same way the dots do a sighted one. */}
       <p aria-live="polite" aria-atomic="true" className="sr-only">
-        {newest?.role === 'assistant' ? newest.text : ''}
+        {busy ? 'Thinking…' : newest?.role === 'assistant' ? newest.text : ''}
       </p>
 
       {!pinned ? (

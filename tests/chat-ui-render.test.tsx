@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import { Chips } from '@/components/chat/chips'
 import { ConfirmationCard } from '@/components/chat/confirmation-card'
+import { MessageList } from '@/components/chat/message-list'
 import { ResultCard } from '@/components/chat/result-card'
 import type { CardEntry } from '@/lib/chat/ui'
 import {
@@ -269,6 +270,30 @@ describe('the result card', () => {
     )
     expect(html).toContain('Not logged')
     expect(html).toContain('In the future.')
+  })
+})
+
+describe('the thinking indicator', () => {
+  // Field report, second round: a turn can now take a few seconds (two model calls on a
+  // continuation), and a silent screen after sending reads as broken.
+  const bubbles = [{ id: 'u1', role: 'user' as const, text: '8h on etoe' }]
+
+  it('shows while a turn is in flight, and announces it politely', () => {
+    const html = render(<MessageList bubbles={bubbles} busy renderUi={() => null} />)
+    expect(html).toContain('data-testid="thinking"')
+    expect(html).toContain('Thinking…')
+    expect(html).toContain('aria-live="polite"')
+  })
+
+  it('is gone the moment the turn is not in flight', () => {
+    const html = render(<MessageList bubbles={bubbles} renderUi={() => null} />)
+    expect(html).not.toContain('data-testid="thinking"')
+    expect(html).not.toContain('Thinking…')
+  })
+
+  it('respects reduced motion — the animation is styled out, not baked in', () => {
+    const html = render(<MessageList bubbles={bubbles} busy renderUi={() => null} />)
+    expect(html).toContain('motion-reduce:animate-none')
   })
 })
 

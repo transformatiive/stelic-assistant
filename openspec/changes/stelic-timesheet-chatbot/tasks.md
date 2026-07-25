@@ -751,6 +751,13 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
       `src/lib/chat/transcript.ts`) — every typed reply now goes through `/api/chat` regardless
       of whether a question is pending, and the backend decides; only chip taps still skip the
       model entirely.
+      **Third field report:** the user retested seconds before Railway finished deploying the
+      matcher fix and saw the old behaviour one more time (the deploy went live 19:59:14 UTC;
+      the fix itself is covered by a test against the report's exact four project names). The
+      actionable part: with up to two model calls per turn now, the wait needs visible
+      feedback — added a typing indicator to `src/components/chat/message-list.tsx` (animated
+      dots while a turn is in flight, `motion-reduce` respected, announced politely to screen
+      readers via the existing live region).
       The rest of the week is still open
 
 ## 11. Handover
