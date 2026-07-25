@@ -115,10 +115,11 @@ Detailed architecture, decisions and API contracts: see `design.md`.
 |---|---|---|---|
 | 1 | ~~Auth model~~ — now gated on spike 1.4 rather than a decision: if Zoho refuses to create a log owned by another user, per-user OAuth is mandatory. Reads use the existing vault credential either way. | Spike 1.4 | Before task group 2 |
 | 2 | Are all timesheet users **licensed Zoho Projects portal users** with a Zoho account on the Stelic org (not just CRM users)? Determines whether OAuth is viable for 100% of staff. | Nuno / Alex | Before task group 2 |
-| 3a | Does the vault token's scope set cover `GET /portal/{id}/users/`? The email → portal-user mapping depends on it. | Nuno (task 0.2) | Before task group 2 |
-| 3 | **Daily hour cap** value and whether it is a hard block or a soft warning (TRNSF-1249). | Werner | Before go-live |
-| 4 | Default **billable status** for chat-created logs — always `Billable` unless the user says otherwise, or inherit from the task? | Werner / Brooke | Before task group 6 |
-| 5 | **Backdating window** — how many days back may a consultant log without PM involvement? | Alex | Before go-live |
-| 6 | Does the app need to respect the **timesheet approval state** (i.e. refuse to log into a week already submitted/approved)? | Alex | Before task group 6 |
-| 7 | ~~OAuth client registration~~ — **resolved**: reuse the existing Stelic server-based client from vault `TRNSF-600`, adding a redirect URI. No new registration. | — | Done |
-| 8 | Production **domain** for the PWA (installability and OAuth redirect both depend on a stable HTTPS origin). | Nuno | Before task group 1 |
+| 3 | Does the vault token's scope set cover `GET /portal/{id}/users/`? The email → portal-user mapping depends on it. | Nuno (task 0.2) | Before task group 2 |
+| 4 | **Daily hour cap** value and whether it is a hard block or a soft warning (TRNSF-1249). | Werner | Before go-live |
+| 5 | Default **billable status** for chat-created logs — always `Billable` unless the user says otherwise, or inherit from the task? | Werner / Brooke | Before task group 6 |
+| 6 | **Backdating window** — how many days back may a consultant log without PM involvement? | Alex | Before go-live |
+| 7 | Does the app need to respect the **timesheet approval state** (i.e. refuse to log into a week already submitted/approved)? | Alex | Before task group 6 |
+| 8 | ~~OAuth client registration~~ — **resolved**: reuse the existing Stelic server-based client from vault `TRNSF-600`, adding a redirect URI. No new registration. | — | Done |
+| 9 | Production **domain** for the PWA (installability and OAuth redirect both depend on a stable HTTPS origin). | Nuno | Before task group 1 |
+| 10 | Does the **`Stelic Financials` Postgres** (repo `transformatiive/Stelic-Billing-Period`) hold time rows, and if so are they *derived from Zoho* or *authored there*? If derived, nothing to do — bot logs flow in via Zoho and `design.md §2` stands. If authored independently, the commit pipeline needs a second destination or the billing app needs a Zoho pull, and that is a design change. Settle from the repo's migrations. | Nuno | Before task group 6 |

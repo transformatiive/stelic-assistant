@@ -279,15 +279,52 @@ surface warnings (daily cap, possible duplicate, backdating).
 
 ### Decision: Railway + Next.js, not Replit
 
-**Choice.** Deploy on Railway alongside the existing n8n instance and credential vault.
+**Choice.** Deploy on Railway, in **its own Railway project with its own Postgres service** —
+not inside the existing `Stelic Financials` project.
 
-**Why.** Same operational surface Nuno already runs and monitors, stable custom domain (a
-hard requirement for both PWA installability and the OAuth redirect URI), managed Postgres,
+**Why Railway.** Same operational surface Nuno already runs and monitors, stable custom domain
+(a hard requirement for both PWA installability and the OAuth redirect URI), managed Postgres,
 and no cold-start behaviour on a user-facing app that must feel instant.
 
-**Alternatives considered.** *Replit Reserved VM* — used for the analytics app, and workable,
-but splits hosting across two providers for one client with no benefit. *Vercel* — good fit
-for Next.js, but adds a third vendor and moves Postgres away from the app.
+**Why its own project.** Two reasons, one forward-looking and one about blast radius:
+
+1. **This is a separate product, not a feature of the billing app.** The likely direction is a
+   general Stelic assistant — a knowledge-base chat with timesheet entry as its first
+   capability. That does not belong inside a project scoped to financials, and moving it later
+   costs a domain change, which is the one thing an installed PWA and a registered OAuth
+   redirect URI both hate.
+2. **Its database holds different material.** Encrypted per-user Zoho refresh tokens, session
+   ids and the full chat transcript have a different sensitivity and a different retention
+   profile from billing data, and two applications should not run Prisma migrations against
+   one schema.
+
+The app therefore reaches Zoho and CRM over their APIs like any other client. It has no
+database-level relationship with the billing app, and it never writes to the `invoiced_logs`
+ledger or the n8n invoice pipeline (see `project.md` → *Integration surface*).
+
+**Separate database does not mean separate time records.** Zoho Projects is the single system
+of record for time. A bot-created log is written to portal `911636649` exactly as the Zoho UI
+would write it — same task, same owner, same `bill_status`, and still triggering
+`stampRoleOnTimelog`. Anything downstream that sources time from Zoho, including the billing
+app and the invoice pipeline, therefore picks up bot-created entries with no second copy to
+reconcile. This app's Postgres holds only its own operational state (sessions, encrypted
+tokens, transcript, project index, `CommitLog`); it is an audit trail of what the app did, not
+a parallel record of time. Tasks 10.5 and 10.6 verify this end to end.
+
+**One writer, not two.** The app SHALL NOT write time rows into the billing app's database,
+even if that database mirrors time. Two independent writers into a billing-relevant table with
+no shared idempotency contract diverge silently, and the divergence surfaces as a wrong
+invoice. If the billing app needs bot-created entries, it sources them from Zoho like every
+other consumer. See open question 10 — this rests on the billing app deriving time from Zoho
+rather than authoring it, which is **not yet verified**.
+
+**Alternatives considered.**
+- *A second service inside the existing `Stelic Financials` project* (which already contains
+  an app service and a Postgres). Rejected per the reasoning above — it saves one project and
+  costs product independence.
+- *Replit Reserved VM* — used for the analytics app, and workable, but splits hosting across
+  two providers for one client with no benefit.
+- *Vercel* — good fit for Next.js, but adds a third vendor and moves Postgres away from the app.
 
 ---
 
@@ -325,7 +362,21 @@ Conversation
 
 Message
   id, conversation_id FK, role ('user' | 'assistant'), content,
-  ui_payload jsonb NULL, created_at
+  ui_payload jsonb NULL, created_at,
+  -- gateway accounting (task 4.6); null on assistant turns produced without a model call
+  generation_id NULL, model_requested NULL, model_served NULL,
+  prompt_tokens NULL, completion_tokens NULL, cost_usd decimal NULL
+
+ServiceToken                     -- single row; the vault TRNSF-600 credential, reads only
+  id, access_token_encrypted, expires_at, refreshed_at
+  -- rapid successive refreshes on this tenant trigger rate limiting, so the access token is
+  -- cached here and refreshed at most once per expiry window across all app instances.
+  -- The refresh token itself is never stored here: it comes from the vault at boot (§7).
+
+RateLimit                        -- fixed-window counter, per user per route
+  id, user_id FK, bucket,            -- e.g. 'chat'
+  window_started_at, count
+  @@unique([user_id, bucket, window_started_at])
 
 Draft                            -- a pending set of entries awaiting confirmation
   id, conversation_id FK, user_id FK, status ('pending'|'confirmed'|'cancelled'|'expired'),
@@ -434,7 +485,7 @@ For each `DraftEntry`, in order:
 5. **Description.** Present, trimmed, ≥ 5 characters and not a single filler word
    (`work`, `stuff`, `misc`, `n/a`) → resolved. Otherwise unresolved slot; the bot asks.
 6. **Billable.** Explicit statement wins; otherwise the configured default
-   (`DEFAULT_BILL_STATUS`, open question #4).
+   (`DEFAULT_BILL_STATUS`, open question #5).
 
 ### 4.3 Clarify
 
@@ -584,17 +635,26 @@ VAULT_EPIC_KEY                  # TRNSF-600
 TOKEN_ENCRYPTION_KEY            # 32-byte key, AES-256-GCM
 SESSION_COOKIE_NAME
 SESSION_MAX_AGE_DAYS            # default 30, sliding
-DAILY_HOUR_CAP                  # open question #3
-BACKDATE_WARN_DAYS              # open question #5
-DEFAULT_BILL_STATUS             # open question #4
+DAILY_HOUR_CAP                  # open question #4
+BACKDATE_WARN_DAYS              # open question #6
+DEFAULT_BILL_STATUS             # open question #5
 DEFAULT_TIMEZONE                # America/New_York
 ```
 
-Credentials are resolved from the credential vault (`TRNSF-600`) at deploy time and injected
-as Railway environment variables. No credential is committed to the repository. The existing
-Stelic service refresh token **is** reused — for reads only — and the existing OAuth client is
-extended with a redirect URI rather than replaced. Per-user refresh tokens are separate,
-encrypted, and never leave the server.
+**The vault is the source, the environment is the interface.** Credentials are resolved from
+the credential vault (`TRNSF-600`) **at deploy time** and injected as Railway environment
+variables. The running application reads credentials only from its environment — it does not
+call `VAULT_URL` on the hot path, at boot, or on token refresh. `VAULT_URL` and
+`VAULT_EPIC_KEY` exist for the deploy-time fetch and for the operational runbook (task 11.2),
+not for runtime resolution. Where §2 says the app "reads the credential from the vault", read
+it as *the deploy pipeline does* — there is one runtime source of truth, and it is
+`ZOHO_SERVICE_REFRESH_TOKEN`.
+
+Config is validated at boot and the process fails fast on a missing or malformed variable
+(task 1.6). No credential is committed to the repository. The existing Stelic service refresh
+token **is** reused — for reads only — and the existing OAuth client is extended with a
+redirect URI rather than replaced. Per-user refresh tokens are separate, encrypted, and never
+leave the server.
 
 ---
 

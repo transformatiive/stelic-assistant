@@ -1,4 +1,4 @@
-# Project: Stelic Timesheet Chatbot
+# Project: Stelic Assistant (timesheet chatbot)
 
 ## Purpose
 
@@ -18,7 +18,7 @@ timesheet grid.
 | Styling | Tailwind CSS + shadcn/ui |
 | Data | PostgreSQL (Railway) via Prisma |
 | LLM | **OpenRouter** (OpenAI-compatible) → `anthropic/claude-sonnet-5`, server-side only, function calling for extraction |
-| Auth | Zoho OAuth 2.0 (authorization code) — see `specs/auth/spec.md` |
+| Auth | Zoho OAuth 2.0 (authorization code) — see `changes/stelic-timesheet-chatbot/specs/auth/spec.md` |
 | Hosting | Railway (same environment family as the existing n8n instance and credential vault) |
 | Package manager | npm |
 | Tests | Vitest (unit) + Playwright (E2E happy paths) |
@@ -36,8 +36,8 @@ timesheet grid.
   arithmetic, validation, and the write to Zoho are plain TypeScript with unit tests.
 - **No `localStorage` for auth.** Session lives in an HTTP-only, `Secure`, `SameSite=Lax`
   cookie. IndexedDB is allowed for non-sensitive UI cache only.
-- **Every Zoho write is idempotent** and recorded in the `commit_log` table before the call
-  is made, updated after. See `design.md §5`.
+- **Every Zoho write is idempotent** and recorded in the `CommitLog` table before the call
+  is made, updated after. See `changes/stelic-timesheet-chatbot/design.md` §3 and §4.5.
 - **Errors are user-facing sentences, not stack traces.** Log the detail server-side with a
   request id; show the user what to do next.
 - **Timezone:** all user-facing date reasoning happens in the user's IANA timezone (default

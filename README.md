@@ -1,10 +1,13 @@
-# Stelic Timesheet Chatbot — SDD Spec
+# Stelic Assistant — timesheet chatbot
 
-Spec-Driven Development artifacts for **Chrono** *(working name)* — a conversational
-timesheet-entry PWA for Stelic, LLC, backed by Zoho Projects + Zoho CRM.
+Spec-Driven Development artifacts for **Stelic Assistant** — a conversational timesheet-entry
+PWA for Stelic, LLC, backed by Zoho Projects + Zoho CRM.
 
-Generated: 2026-07-25 · Client: Stelic, LLC · Epic: TRNSF-589 · Target agent: Claude Code
-Repo: `https://github.com/transformatiive/stelic-assistant` · Model gateway: OpenRouter
+Client: Stelic, LLC · Epic: [TRNSF-589](https://transformatiive.atlassian.net/browse/TRNSF-589) ·
+Build ticket: [TRNSF-1321](https://transformatiive.atlassian.net/browse/TRNSF-1321) ·
+Target agent: Claude Code · Model gateway: OpenRouter
+
+> Spec only so far — no application code in this repo yet.
 
 ---
 
@@ -24,19 +27,20 @@ openspec/
             └── pwa-shell/spec.md               # Installability, mobile UX, chat surface
 ```
 
+Read them in that order. `proposal.md` says what and why, `design.md` says how, the three
+`spec.md` files are the behaviour contract (Given/When/Then), and `tasks.md` is the order of
+work.
+
 ## How to use
 
-### 1. Land the spec in the repo
+### 1. Set up OpenSpec tooling
 
 ```bash
 git clone git@github.com:transformatiive/stelic-assistant.git
 cd stelic-assistant
 npm install -g @fission-ai/openspec@latest
-openspec init
+openspec init          # merge with the existing openspec/ folder; do not overwrite it
 ```
-
-Then copy this `openspec/` folder into the repo root, merging with what `init` created, and
-commit it before any application code — the spec is the first commit, not an afterthought.
 
 ### 2. Start work in Claude Code
 
@@ -78,10 +82,11 @@ create a time log owned by a *different* user? Zoho's documented parameters say 
 support position has said no, but that evidence predates the current API and was never tested
 against this portal. If it is no, per-user Zoho login is mandatory — the log's owner *is* the
 timesheet. If it is yes, the service credential can do the writes and login gets simpler.
-Do not build task group 2 before this has an answer.
+Do not build task group 2 before this has an answer. Record it in `design.md §5`.
 
-**Still open:** the daily hour cap (Werner, TRNSF-1249), default billable status, backdating
-window.
+**Still open:** portal-membership coverage, production domain, the daily hour cap (Werner,
+TRNSF-1249), default billable status, backdating window, and whether the app must respect
+timesheet approval state. Full list with owners: `proposal.md` → *Open questions*.
 
 The model gateway is OpenRouter, pinned to `anthropic/claude-sonnet-5` with
 `data_collection: "deny"` and `zdr: true`. Task 4.1 must confirm ZDR endpoints are available

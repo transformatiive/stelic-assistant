@@ -15,18 +15,24 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
       token with the users scope added and update the vault entry
 - [ ] 0.3 Add this app's redirect URI to the **existing** Stelic OAuth client (server-based
       app — the vault entry shows a redirect URI already in use). No new client registration
-- [ ] 0.4 Confirm open questions 2 and 8 in `proposal.md` (portal membership coverage,
+- [ ] 0.4 Confirm open questions 2 and 9 in `proposal.md` (portal membership coverage,
       production domain)
 - [ ] 0.5 Provision the OpenRouter key (dedicated key for this app so spend is attributable),
       set the account privacy defaults, and register it in the vault under `TRNSF-600`
 
 ## 1. Foundations
 
-- [ ] 1.1 Clone `git@github.com:transformatiive/stelic-assistant.git` and scaffold Next.js 15
-      + TypeScript + Tailwind + shadcn/ui in it; strict mode, ESLint, Prettier, CI on push
-- [ ] 1.2 Add Prisma with the schema from `design.md §3`; first migration
-- [ ] 1.3 Provision Railway service + Postgres; deploy the empty app to a stable HTTPS domain
-      (the existing `stelic-billing-period` Railway project is the natural home)
+- [ ] 1.1 In `transformatiive/stelic-assistant` (the repo already exists and holds this spec
+      under `openspec/`), scaffold Next.js 15 + TypeScript + Tailwind + shadcn/ui alongside
+      it; strict mode, ESLint, Prettier, Vitest, CI on push
+- [ ] 1.2 Add Prisma with the schema from `design.md §3` — including `ServiceToken` (service
+      access-token cache, task 1.5), `RateLimit` (task 7.4) and the gateway accounting columns
+      on `Message` (task 4.6); first migration
+- [ ] 1.3 Provision a **new** Railway project (`Stelic Assistant`) with its own app service
+      and its own Postgres — not inside the existing `Stelic Financials` project, which is a
+      different product (`design.md §2`). Deploy the empty app to a stable HTTPS domain; that
+      domain is open question 9 and is a prerequisite for both PWA installability and the
+      OAuth redirect URI
 - [ ] 1.4 **DECISIVE SPIKE — run this before task group 2.** Against the real portal with the
       vault service token and a test task:
       (a) can a log be created owned by a *different* user (any `owner`-style parameter, any
@@ -39,8 +45,9 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
       env, auth header injection, 401-refresh-once, 429 backoff with jitter, request-id
       logging. Cache the service access token in Postgres — rapid successive refreshes on
       this tenant trigger rate limiting
-- [ ] 1.6 Config module reading and validating all env vars at boot (fail fast on missing)
-- [ ] 1.6 Config module reading and validating all env vars at boot (fail fast on missing)
+- [ ] 1.6 Config module reading and validating all env vars at boot (fail fast on missing or
+      malformed). Credentials come from the environment only — the runtime never calls the
+      vault (`design.md §7`)
 
 ## 2. Authentication and session
 
@@ -159,6 +166,10 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
       be able to widen its own tool surface)
 - [ ] 9.4 Health check endpoint + Railway restart policy
 - [ ] 9.5 Seed/import script to warm the project index for all portal users
+- [ ] 9.6 Operational alerting for configuration and quota faults that are not the user's
+      fault: portal-user lookup failing on scope (auth spec: *Portal user lookup is
+      unavailable*), OpenRouter `402`, no ZDR-eligible endpoint. One channel, one severity —
+      the user always sees a plain sentence, never the cause
 
 ## 10. Verification
 
