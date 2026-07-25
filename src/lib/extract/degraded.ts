@@ -6,6 +6,7 @@ import {
   NoCompliantEndpointError,
   UnusableExtractionError,
 } from './errors'
+import { alert, log } from '@/lib/observability/log'
 
 /**
  * What to do when extraction fails (task 4.5, CHAT-13).
@@ -102,12 +103,24 @@ export function classifyExtractionFailure(error: unknown): DegradedOutcome {
 
 /** Structured log for a failed extraction. Carries no prompt text and no user message. */
 export function logExtractionFailure(error: unknown, outcome: DegradedOutcome): void {
-  const line = JSON.stringify({
-    event: 'extract.failed',
+  const fields = {
     reason: outcome.reason,
-    requestId: error instanceof ExtractionError ? error.requestId : null,
+    gatewayRequestId: error instanceof ExtractionError ? error.requestId : null,
     detail: error instanceof UnusableExtractionError ? error.reason : null,
-  })
-  if (outcome.alert) console.error(line)
-  else console.warn(line)
+  }
+
+  // The two that mean the bot is quietly useless for everyone go to the one alert channel
+  // (task 9.6); a busy gateway is just a bad minute and stays a warning.
+  if (outcome.alert) {
+    alert(
+      outcome.reason === 'credits_exhausted'
+        ? 'credits_exhausted'
+        : outcome.reason === 'no_compliant_endpoint'
+          ? 'no_compliant_endpoint'
+          : 'config',
+      fields,
+    )
+    return
+  }
+  log.warn('extract.failed', fields)
 }

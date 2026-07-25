@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import type { PrismaClient } from '@/generated/prisma/client'
 import type { ZohoClient } from './client'
+import { log } from '@/lib/observability/log'
 
 /**
  * Which CRM user is this person (task 2.5)?
@@ -69,13 +70,7 @@ export async function resolveCrmUserId(
   if (!match) {
     // Not an error: somebody can have a Zoho Projects account and no CRM record. The
     // consequence is a blank billing role, which is the documented empty case.
-    console.info(
-      JSON.stringify({
-        event: 'crm.user_unmatched',
-        userId: user.id,
-        candidates: users.length,
-      }),
-    )
+    log.info('crm.user_unmatched', { userId: user.id, candidates: users.length })
     return null
   }
 
