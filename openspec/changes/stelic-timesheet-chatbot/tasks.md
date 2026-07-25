@@ -217,12 +217,42 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
 
 ## 3. Project index
 
-- [ ] 3.1 Using the **service** credential, fetch projects (paged) and, per project, the
+- [x] 3.1 Using the **service** credential, fetch projects (paged) and, per project, the
       tasks each user can log to — this lets the index be warmed before a user first signs in
-- [ ] 3.2 For each project, read `crm_deal_id`; batch-fetch deal name and account name from
+      — `lib/zoho/{projects,factory}.ts`. Zoho pages with a 1-based `index` and signals the end
+      by returning a short page: no total, no cursor. Every identifier comes from `id_string`,
+      and `identifier()` **refuses** a numeric `id` past `Number.MAX_SAFE_INTEGER` rather than
+      falling back to it — a corrupted id does not fail loudly, it addresses the wrong record.
+      A row with no usable id is skipped, not guessed at, and does not fail the page.
+      Task fetching is one call per project against a 100-per-120s limit, so
+      `maxProjectsWithTasks` bounds it; a capped project stays indexed and matchable, just
+      without charge codes
+- [x] 3.2 For each project, read `crm_deal_id`; batch-fetch deal name and account name from
       CRM
-- [ ] 3.3 Fetch the user's last 60 days of logs to derive a recency score per project
-- [ ] 3.4 Persist to `ProjectIndex`; build on login, refresh hourly and on demand
+      — `lib/zoho/crm.ts`. One batched call for every deal rather than one per project. The
+      deal id is read from the documented column and, failing that, from a custom field, since
+      not every portal carries it the same way. A project whose deal CRM does not return keeps
+      its row and loses only the client name — a deleted deal must not drop a live project out
+      of the index. A `204` on a batch means "none of these exist"; any other error propagates,
+      because a systematically broken CRM read must not quietly look like "no clients"
+- [~] 3.3 Fetch the user's last 60 days of logs to derive a recency score per project
+      — **Not from Zoho: that read does not exist.** Both documented forms of the portal-wide
+      range call return `6891 "Given URL is wrong"` (design §5, task 6.11). The verified
+      alternative is per-task, and walking every task of 145 projects is far outside the rate
+      budget for a signal that only breaks ties.
+      So `refreshRecency` derives it from `CommitLog` — this app's own record of what it
+      wrote. Recency therefore starts empty for a new user and sharpens with use. The
+      consequence is real and bounded: the matcher caps recency at 0.10, below the 0.15 resolve
+      gap, so its absence can cost a tie-break and never a correct match. Revisit when 6.11
+      establishes a contract
+- [x] 3.4 Persist to `ProjectIndex`; build on login, refresh hourly and on demand
+      — `lib/index/store.ts` plus `POST /api/index/refresh` (and `GET` for staleness, which
+      spends no Zoho call). Projects absent from a build are deleted, so the matcher cannot
+      keep offering something nobody can log to. `lastLoggedAt` is deliberately excluded from
+      the upsert: it is the user's own history and a portal refresh must not wipe it.
+      The route names `403 Invalid OAuth scope` as its own failure reason rather than a generic
+      upstream error — it is the single most likely thing to be wrong on a first run, and task
+      0.2 already hit it once
 - [x] 3.5 Matcher: normalisation (case, punctuation, id prefixes), token + trigram scoring,
       recency boost, thresholds per `design.md §4.2`
       — `lib/index/{normalise,match}.ts`. Trigram Dice alone scored `clacyo` against `clayco`
