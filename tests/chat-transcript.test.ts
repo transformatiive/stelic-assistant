@@ -157,7 +157,10 @@ describe('answering a pending question by typing', () => {
 
   it('echoes the typed answer and empties the composer, like an ordinary send', () => {
     const state = run(
-      [...typed('saturday'), { type: 'answer', id: 'u1', bubbleId: 'a1', text: 'saturday' }],
+      [
+        ...typed('saturday'),
+        { type: 'answer', id: 'u1', bubbleId: 'a1', text: 'saturday' },
+      ],
       question,
     )
     expect(state.bubbles.at(-1)).toEqual({ id: 'u1', role: 'user', text: 'saturday' })
@@ -166,7 +169,10 @@ describe('answering a pending question by typing', () => {
   })
 
   it('kills the question it answered, same as a chip tap would', () => {
-    const state = run([{ type: 'answer', id: 'u1', bubbleId: 'a1', text: 'saturday' }], question)
+    const state = run(
+      [{ type: 'answer', id: 'u1', bubbleId: 'a1', text: 'saturday' }],
+      question,
+    )
     expect(state.bubbles[0]!.answered).toBe(true)
   })
 

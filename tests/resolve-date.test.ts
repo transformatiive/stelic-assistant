@@ -123,7 +123,8 @@ describe('resolveDate', () => {
     // "July 25th" a few days *ahead* of today and trigger the year-rollback convention below,
     // which is correct behaviour but not what this section is testing.
     const SAT = new Date('2026-07-25T18:00:00Z')
-    const onSat = (expression: string) => resolveDate(expression, { timeZone: NY, now: SAT })
+    const onSat = (expression: string) =>
+      resolveDate(expression, { timeZone: NY, now: SAT })
 
     it('accepts a month name and a day, in either order', () => {
       // The live bug: "July 25th" was never recognised at all — there was no month-name
@@ -169,7 +170,10 @@ describe('resolveDate', () => {
     })
 
     it('rejects a day that does not exist in that month', () => {
-      expect(onSat('February 30th')).toEqual({ status: 'unresolved', reason: 'unrecognised' })
+      expect(onSat('February 30th')).toEqual({
+        status: 'unresolved',
+        reason: 'unrecognised',
+      })
     })
 
     it('does not mistake a plain weekday name for a month', () => {

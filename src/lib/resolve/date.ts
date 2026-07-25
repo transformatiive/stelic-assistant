@@ -109,7 +109,11 @@ function mostRecentWeekday(target: Weekday, today: CivilDate): CivilDate {
  * stepping back a year rather than landing eleven months in the future. "July 25th" said in
  * January means last July, not a date that gets blocked as upcoming.
  */
-function mostRecentMonthDay(month: number, day: number, today: CivilDate): CivilDate | null {
+function mostRecentMonthDay(
+  month: number,
+  day: number,
+  today: CivilDate,
+): CivilDate | null {
   const thisYear = parseIso(formatIso({ year: today.year, month, day } as CivilDate))
   if (!thisYear) return null
   if (compare(thisYear, today) <= 0) return thisYear
@@ -203,13 +207,19 @@ export function resolveDate(
     const day = Number(monthDayMatch.day)
 
     if (yearText) {
-      const date = parseIso(formatIso({ year: Number(yearText), month, day } as CivilDate))
-      return date ? resolvedOrBlocked(date) : { status: 'unresolved', reason: 'unrecognised' }
+      const date = parseIso(
+        formatIso({ year: Number(yearText), month, day } as CivilDate),
+      )
+      return date
+        ? resolvedOrBlocked(date)
+        : { status: 'unresolved', reason: 'unrecognised' }
     }
     // No year stated: the most recent occurrence, matching the bare-numeric convention —
     // "July 25th" said in January means last July, not a date blocked as eleven months out.
     const date = mostRecentMonthDay(month, day, today)
-    return date ? resolvedOrBlocked(date) : { status: 'unresolved', reason: 'unrecognised' }
+    return date
+      ? resolvedOrBlocked(date)
+      : { status: 'unresolved', reason: 'unrecognised' }
   }
 
   // Weekday names, with or without a "last"/"on" prefix
