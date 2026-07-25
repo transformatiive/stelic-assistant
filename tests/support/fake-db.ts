@@ -41,7 +41,6 @@ export type SessionRow = {
 }
 
 export type ProjectIndexRow = {
-  userId: string
   projectId: string
   projectName: string
   projectIdString: string | null
@@ -50,7 +49,6 @@ export type ProjectIndexRow = {
   accountName: string | null
   aliases: string[]
   chargeCodes: unknown
-  lastLoggedAt: Date | null
   refreshedAt: Date
 }
 
@@ -249,70 +247,41 @@ export class FakeDb {
       create,
       update,
     }: {
-      where: { userId_projectId: { userId: string; projectId: string } }
+      where: { projectId: string }
       create: ProjectIndexRow
       update: Partial<ProjectIndexRow>
     }) => {
-      const { userId, projectId } = where.userId_projectId
-      const existing = this.projectIndexes.find(
-        (r) => r.userId === userId && r.projectId === projectId,
-      )
+      const existing = this.projectIndexes.find((r) => r.projectId === where.projectId)
       if (existing) Object.assign(existing, update)
-      else
-        this.projectIndexes.push({ ...create, lastLoggedAt: create.lastLoggedAt ?? null })
+      else this.projectIndexes.push({ ...create })
       return {}
     },
 
-    deleteMany: async ({
-      where,
-    }: {
-      where: { userId: string; projectId?: { notIn: string[] } }
-    }) => {
+    deleteMany: async ({ where }: { where: { projectId?: { notIn: string[] } } }) => {
       const before = this.projectIndexes.length
       this.projectIndexes = this.projectIndexes.filter(
         (r) =>
-          r.userId !== where.userId ||
-          (where.projectId !== undefined && where.projectId.notIn.includes(r.projectId)),
+          where.projectId !== undefined && where.projectId.notIn.includes(r.projectId),
       )
       return { count: before - this.projectIndexes.length }
     },
 
-    updateMany: async ({
-      where,
-      data,
-    }: {
-      where: { userId: string; projectId: string }
-      data: Partial<ProjectIndexRow>
-    }) => {
-      const matched = this.projectIndexes.filter(
-        (r) => r.userId === where.userId && r.projectId === where.projectId,
-      )
-      matched.forEach((r) => Object.assign(r, data))
-      return { count: matched.length }
-    },
+    findMany: async () => this.projectIndexes,
 
-    findMany: async ({ where }: { where: { userId: string } }) =>
-      this.projectIndexes.filter((r) => r.userId === where.userId),
+    findFirst: async () =>
+      [...this.projectIndexes].sort(
+        (a, b) => b.refreshedAt.getTime() - a.refreshedAt.getTime(),
+      )[0] ?? null,
 
-    findFirst: async ({ where }: { where: { userId: string } }) =>
-      this.projectIndexes
-        .filter((r) => r.userId === where.userId)
-        .sort((a, b) => b.refreshedAt.getTime() - a.refreshedAt.getTime())[0] ?? null,
-
-    count: async ({ where }: { where: { userId: string } }) =>
-      this.projectIndexes.filter((r) => r.userId === where.userId).length,
+    count: async () => this.projectIndexes.length,
   }
 
   /** Only the one existence check `isIndexStale` makes. Not a SQL engine. */
-  async $queryRaw<T>(strings: TemplateStringsArray, ...values: unknown[]): Promise<T> {
+  async $queryRaw<T>(strings: TemplateStringsArray, ..._values: unknown[]): Promise<T> {
     const sql = strings.join(' ')
     if (sql.includes('project_indexes') && sql.includes('jsonb_array_length')) {
-      const userId = values[0] as string
       const exists = this.projectIndexes.some(
-        (r) =>
-          r.userId === userId &&
-          Array.isArray(r.chargeCodes) &&
-          (r.chargeCodes as unknown[]).length > 0,
+        (r) => Array.isArray(r.chargeCodes) && (r.chargeCodes as unknown[]).length > 0,
       )
       return [{ exists }] as T
     }

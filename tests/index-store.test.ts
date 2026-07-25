@@ -5,7 +5,6 @@ import {
   INDEX_TTL_MS,
   isIndexStale,
   loadProjectIndex,
-  refreshRecency,
   saveProjectIndex,
 } from '@/lib/index/store'
 import { matchProject } from '@/lib/index/match'
@@ -32,7 +31,6 @@ describe('saveProjectIndex', () => {
     const db = new FakeDb()
     const result = await saveProjectIndex(
       db.client,
-      'u1',
       [row(), row({ projectId: 'p2', projectName: 'Other' })],
       NOW,
     )
@@ -42,38 +40,44 @@ describe('saveProjectIndex', () => {
 
   it('removes projects that have left the portal or closed', async () => {
     const db = new FakeDb()
-    await saveProjectIndex(db.client, 'u1', [row(), row({ projectId: 'p2' })], NOW)
-    const result = await saveProjectIndex(db.client, 'u1', [row()], NOW)
+    await saveProjectIndex(db.client, [row(), row({ projectId: 'p2' })], NOW)
+    const result = await saveProjectIndex(db.client, [row()], NOW)
 
     expect(result.removed).toBe(1)
     expect(db.projectIndexes.map((r) => r.projectId)).toEqual(['p1'])
   })
 
-  it('leaves another user’s index alone', async () => {
+  it('stores one copy of the portal, not one per person', async () => {
+    // A per-user index made a scheduled rebuild impossible: 145 Zoho calls each, against a
+    // 100-per-120-seconds limit.
     const db = new FakeDb()
-    await saveProjectIndex(db.client, 'u1', [row(), row({ projectId: 'p2' })], NOW)
-    await saveProjectIndex(db.client, 'u2', [row()], NOW)
+    await saveProjectIndex(db.client, [row(), row({ projectId: 'p2' })], NOW)
+    await saveProjectIndex(db.client, [row(), row({ projectId: 'p2' })], NOW)
 
-    expect(db.projectIndexes.filter((r) => r.userId === 'u1')).toHaveLength(2)
-    expect(db.projectIndexes.filter((r) => r.userId === 'u2')).toHaveLength(1)
+    expect(db.projectIndexes).toHaveLength(2)
   })
 
-  it('does not wipe recency when the portal is refreshed', async () => {
+  it('updates a renamed project in place', async () => {
     const db = new FakeDb()
-    await saveProjectIndex(db.client, 'u1', [row()], NOW)
-    db.projectIndexes[0]!.lastLoggedAt = new Date('2026-07-20T00:00:00Z')
+    await saveProjectIndex(db.client, [row()], NOW)
+    await saveProjectIndex(db.client, [row({ projectName: 'Renamed' })], NOW)
 
-    await saveProjectIndex(db.client, 'u1', [row({ projectName: 'Renamed' })], NOW)
-
+    expect(db.projectIndexes).toHaveLength(1)
     expect(db.projectIndexes[0]!.projectName).toBe('Renamed')
-    expect(db.projectIndexes[0]!.lastLoggedAt).toEqual(new Date('2026-07-20T00:00:00Z'))
   })
 })
 
-describe('refreshRecency', () => {
-  it('records each project’s most recent successful log', async () => {
+describe('recency, folded in at read time', () => {
+  // Recency is computed rather than stored, which is what lets the index be shared: nothing
+  // in the portal differs between users, and a per-user copy made a scheduled rebuild
+  // impossible at 145 Zoho calls each.
+  it('takes each project’s most recent successful log', async () => {
     const db = new FakeDb()
-    await saveProjectIndex(db.client, 'u1', [row(), row({ projectId: 'p2' })], NOW)
+    await saveProjectIndex(
+      db.client,
+      [row(), row({ projectId: 'p2', projectName: 'Second', aliases: ['Second'] })],
+      NOW,
+    )
     db.commitLogs.push(
       {
         userId: 'u1',
@@ -95,35 +99,70 @@ describe('refreshRecency', () => {
       },
     )
 
-    expect(await refreshRecency(db.client, 'u1', 60, NOW)).toBe(2)
-    expect(db.projectIndexes[0]!.lastLoggedAt).toEqual(new Date('2026-07-22'))
-    expect(db.projectIndexes[1]!.lastLoggedAt).toEqual(new Date('2026-07-01'))
+    const index = await loadProjectIndex(db.client, 'u1', { now: NOW })
+    expect(index.find((p) => p.projectId === 'p1')?.lastLoggedAt).toBe('2026-07-22')
+    expect(index.find((p) => p.projectId === 'p2')?.lastLoggedAt).toBe('2026-07-01')
+  })
+
+  it('is per user, over one shared index', async () => {
+    const db = new FakeDb()
+    await saveProjectIndex(db.client, [row()], NOW)
+    db.commitLogs.push({
+      userId: 'u1',
+      projectId: 'p1',
+      status: 'success',
+      logDate: new Date('2026-07-22'),
+    })
+
+    const mine = await loadProjectIndex(db.client, 'u1', { now: NOW })
+    const theirs = await loadProjectIndex(db.client, 'u2', { now: NOW })
+
+    expect(mine[0]!.lastLoggedAt).toBe('2026-07-22')
+    expect(theirs[0]!.lastLoggedAt).toBeNull()
+    // Same projects either way — only the recency differs.
+    expect(mine.map((p) => p.projectId)).toEqual(theirs.map((p) => p.projectId))
   })
 
   it('ignores a failed commit — an attempt is not a log', async () => {
     const db = new FakeDb()
-    await saveProjectIndex(db.client, 'u1', [row()], NOW)
+    await saveProjectIndex(db.client, [row()], NOW)
     db.commitLogs.push({
       userId: 'u1',
       projectId: 'p1',
       status: 'failed',
       logDate: new Date('2026-07-22'),
     })
-
-    expect(await refreshRecency(db.client, 'u1', 60, NOW)).toBe(0)
-    expect(db.projectIndexes[0]!.lastLoggedAt).toBeNull()
+    expect(
+      (await loadProjectIndex(db.client, 'u1', { now: NOW }))[0]!.lastLoggedAt,
+    ).toBeNull()
   })
 
   it('ignores logs older than the window', async () => {
     const db = new FakeDb()
-    await saveProjectIndex(db.client, 'u1', [row()], NOW)
+    await saveProjectIndex(db.client, [row()], NOW)
     db.commitLogs.push({
       userId: 'u1',
       projectId: 'p1',
       status: 'success',
       logDate: new Date('2026-01-01'),
     })
-    expect(await refreshRecency(db.client, 'u1', 60, NOW)).toBe(0)
+    expect(
+      (await loadProjectIndex(db.client, 'u1', { now: NOW }))[0]!.lastLoggedAt,
+    ).toBeNull()
+  })
+
+  it('hands the matcher a civil date, not an instant', async () => {
+    const db = new FakeDb()
+    await saveProjectIndex(db.client, [row()], NOW)
+    db.commitLogs.push({
+      userId: 'u1',
+      projectId: 'p1',
+      status: 'success',
+      logDate: new Date('2026-07-22T23:30:00Z'),
+    })
+    expect((await loadProjectIndex(db.client, 'u1', { now: NOW }))[0]!.lastLoggedAt).toBe(
+      '2026-07-22',
+    )
   })
 
   it('is empty for a new user, which the matcher tolerates by design', async () => {
@@ -131,43 +170,28 @@ describe('refreshRecency', () => {
     // from this app's own writes. The matcher caps recency below the resolve gap, so its
     // absence can only cost a tie-break — never a correct match.
     const db = new FakeDb()
-    await saveProjectIndex(db.client, 'u1', [row()], NOW)
-    expect(await refreshRecency(db.client, 'u1', 60, NOW)).toBe(0)
+    await saveProjectIndex(db.client, [row()], NOW)
 
-    const index = await loadProjectIndex(db.client, 'u1')
-    const result = matchProject('clayco', index, TODAY)
-    expect(result.status).toBe('resolved')
-  })
-})
-
-describe('loadProjectIndex', () => {
-  it('hands the matcher a civil date, not an instant', async () => {
-    const db = new FakeDb()
-    await saveProjectIndex(db.client, 'u1', [row()], NOW)
-    db.projectIndexes[0]!.lastLoggedAt = new Date('2026-07-22T23:30:00Z')
-
-    const [project] = await loadProjectIndex(db.client, 'u1')
-    expect(project!.lastLoggedAt).toBe('2026-07-22')
-  })
-
-  it('reports no history as null rather than a date', async () => {
-    const db = new FakeDb()
-    await saveProjectIndex(db.client, 'u1', [row()], NOW)
-    expect((await loadProjectIndex(db.client, 'u1'))[0]!.lastLoggedAt).toBeNull()
+    const index = await loadProjectIndex(db.client, 'u1', { now: NOW })
+    expect(index[0]!.lastLoggedAt).toBeNull()
+    expect(matchProject('clayco', index, TODAY).status).toBe('resolved')
   })
 
   it('round-trips into a working match', async () => {
     const db = new FakeDb()
     await saveProjectIndex(
       db.client,
-      'u1',
       [
         row(),
         row({ projectId: 'p2', projectName: 'STE-2 - Google: Ads', aliases: ['Google'] }),
       ],
       NOW,
     )
-    const result = matchProject('google', await loadProjectIndex(db.client, 'u1'), TODAY)
+    const result = matchProject(
+      'google',
+      await loadProjectIndex(db.client, 'u1', { now: NOW }),
+      TODAY,
+    )
     expect(result.status).toBe('resolved')
     if (result.status === 'resolved') expect(result.match.project.projectId).toBe('p2')
   })
@@ -175,17 +199,17 @@ describe('loadProjectIndex', () => {
 
 describe('isIndexStale', () => {
   it('is stale when there is no index at all', async () => {
-    expect(await isIndexStale(new FakeDb().client, 'u1', NOW)).toBe(true)
+    expect(await isIndexStale(new FakeDb().client, NOW)).toBe(true)
   })
 
   it('is fresh just inside the TTL and stale just outside it', async () => {
     const db = new FakeDb()
-    await saveProjectIndex(db.client, 'u1', [row()], NOW)
+    await saveProjectIndex(db.client, [row()], NOW)
 
     const justInside = new Date(NOW.getTime() + INDEX_TTL_MS - 1000)
     const justOutside = new Date(NOW.getTime() + INDEX_TTL_MS + 1000)
-    expect(await isIndexStale(db.client, 'u1', justInside)).toBe(false)
-    expect(await isIndexStale(db.client, 'u1', justOutside)).toBe(true)
+    expect(await isIndexStale(db.client, justInside)).toBe(false)
+    expect(await isIndexStale(db.client, justOutside)).toBe(true)
   })
 })
 
@@ -197,41 +221,41 @@ describe('an index with no charge codes is stale, however recent', () => {
 
   it('rebuilds once past the retry floor when nothing has a charge code', async () => {
     const db = new FakeDb()
-    await saveProjectIndex(db.client, 'u1', [codeless()], NOW)
+    await saveProjectIndex(db.client, [codeless()], NOW)
 
     const later = new Date(NOW.getTime() + INDEX_MIN_RETRY_MS + 1000)
-    expect(await isIndexStale(db.client, 'u1', later)).toBe(true)
+    expect(await isIndexStale(db.client, later)).toBe(true)
   })
 
   it('does not rebuild on every page load', async () => {
     // A portal that genuinely has no tasks must not become a rate-limit problem.
     const db = new FakeDb()
-    await saveProjectIndex(db.client, 'u1', [codeless()], NOW)
+    await saveProjectIndex(db.client, [codeless()], NOW)
 
     const soon = new Date(NOW.getTime() + 60_000)
-    expect(await isIndexStale(db.client, 'u1', soon)).toBe(false)
+    expect(await isIndexStale(db.client, soon)).toBe(false)
   })
 
   it('leaves a working index alone', async () => {
     const db = new FakeDb()
-    await saveProjectIndex(db.client, 'u1', [row()], NOW)
+    await saveProjectIndex(db.client, [row()], NOW)
 
     const later = new Date(NOW.getTime() + INDEX_MIN_RETRY_MS + 1000)
-    expect(await isIndexStale(db.client, 'u1', later)).toBe(false)
+    expect(await isIndexStale(db.client, later)).toBe(false)
   })
 
   it('still expires on age, charge codes or not', async () => {
     const db = new FakeDb()
-    await saveProjectIndex(db.client, 'u1', [row()], NOW)
+    await saveProjectIndex(db.client, [row()], NOW)
     expect(
-      await isIndexStale(db.client, 'u1', new Date(NOW.getTime() + INDEX_TTL_MS + 1000)),
+      await isIndexStale(db.client, new Date(NOW.getTime() + INDEX_TTL_MS + 1000)),
     ).toBe(true)
   })
 
   it('counts a single project with codes as enough', async () => {
     const db = new FakeDb()
-    await saveProjectIndex(db.client, 'u1', [codeless(), row({ projectId: 'p2' })], NOW)
+    await saveProjectIndex(db.client, [codeless(), row({ projectId: 'p2' })], NOW)
     const later = new Date(NOW.getTime() + INDEX_MIN_RETRY_MS + 1000)
-    expect(await isIndexStale(db.client, 'u1', later)).toBe(false)
+    expect(await isIndexStale(db.client, later)).toBe(false)
   })
 })
