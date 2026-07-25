@@ -1,4 +1,5 @@
 import {
+  dropFillerWords,
   fuzzyTokenCoverage,
   nameFragments,
   normalise,
@@ -82,7 +83,10 @@ function fieldScore(query: string, value: string | null | undefined): number {
     const combined = Math.max(
       tokenCoverage(query, fragment),
       fuzzyTokenCoverage(query, fragment),
-      trigramSimilarity(query, fragment) * 0.9,
+      // Trigram similarity works on character runs, not words, so it would otherwise still
+      // see "project" shared between "etoe project" and every candidate that embeds this
+      // portal's own naming convention. Stripped on both sides, symmetrically.
+      trigramSimilarity(dropFillerWords(query), dropFillerWords(fragment)) * 0.9,
     )
     if (combined > best) best = combined
   }

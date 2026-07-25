@@ -7,7 +7,6 @@ import {
   canSend as canSendNow,
   initialTranscript,
   noticeForStatus,
-  pendingQuestion,
   transcriptReducer,
   type Bubble,
 } from '@/lib/chat/transcript'
@@ -125,33 +124,6 @@ export function Chat({ today }: { today: string }) {
         slot: bubble.ui.slot,
         value: chip.value,
       })
-      if (result) dispatch({ type: 'reply', id: id(), text: result.reply, ui: result.ui })
-    },
-    [post],
-  )
-
-  /**
-   * A typed answer to the question still on screen (CHAT-7's free-text fallback), routed to
-   * `/api/chat/action` with that question's own draft/entry/slot rather than to `/api/chat` as
-   * a fresh message. Without this, a date, hours or description question — none of which offer
-   * chips — had no way to be answered at all by typing: every reply re-ran extraction from
-   * scratch and re-asked whatever the model noticed first, which is what made the conversation
-   * appear to lose all memory of what had already been answered.
-   */
-  const answerPending = useCallback(
-    async (bubble: Bubble, text: string) => {
-      if (bubble.ui?.kind !== 'question') return
-      dispatch({ type: 'answer', id: id(), bubbleId: bubble.id, text })
-      const result = await post<{ reply: string; ui: ChatUi }>(
-        '/api/chat/action',
-        {
-          draftId: bubble.ui.draftId,
-          entryId: bubble.ui.entryId,
-          slot: bubble.ui.slot,
-          value: text,
-        },
-        text,
-      )
       if (result) dispatch({ type: 'reply', id: id(), text: result.reply, ui: result.ui })
     },
     [post],
@@ -293,12 +265,7 @@ export function Chat({ today }: { today: string }) {
         disabled={state.busy || state.notice?.kind === 'signed_out'}
         canSend={canSendNow(state)}
         onChange={(text) => dispatch({ type: 'type', text })}
-        onSend={() => {
-          const text = state.draftText.trim()
-          const pending = pendingQuestion(state)
-          if (pending) void answerPending(pending, text)
-          else void send(text)
-        }}
+        onSend={() => void send(state.draftText.trim())}
       />
     </div>
   )

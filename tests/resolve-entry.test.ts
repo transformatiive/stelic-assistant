@@ -370,14 +370,65 @@ describe('applyAnswer', () => {
     expect(updated[0]!.description.status).toBe('unresolved')
   })
 
-  it('ignores an answer naming a project that is not in the index', () => {
+  it('re-matches a typed project answer, rather than requiring a chip’s literal id', () => {
+    // The live bug: a chip posts an id from the index directly (`p-google` above), but typing
+    // an answer instead — CHAT-7's free-text fallback — posts what was actually typed, and
+    // that used to look up nothing, leave the entry untouched, and re-ask the identical
+    // question forever. A typed name gets the same matcher a fresh mention would.
+    const entries = resolveEntries(
+      [extracted({ project_query: 'nothing that matches anything here' })],
+      context(),
+    )
+    expect(entries[0]!.project.status).toBe('unresolved')
+
+    const updated = applyAnswer(
+      entries,
+      { entryId: 'e1', slot: 'project', value: 'google' },
+      context(),
+    )
+    expect(updated[0]!.project).toMatchObject({
+      status: 'resolved',
+      projectId: 'p-google',
+    })
+  })
+
+  it('updates what the person said, so a repeated question quotes the latest attempt', () => {
     const entries = ambiguous()
     const updated = applyAnswer(
       entries,
-      { entryId: 'e1', slot: 'project', value: 'p-does-not-exist' },
+      { entryId: 'e1', slot: 'project', value: 'still not it' },
       context(),
     )
-    expect(updated[0]!.project).toEqual(entries[0]!.project)
+    expect(updated[0]!.said.project).toBe('still not it')
+  })
+
+  it('is honestly unresolved on a typed answer that matches nothing, not silently unchanged', () => {
+    const entries = ambiguous()
+    const updated = applyAnswer(
+      entries,
+      { entryId: 'e1', slot: 'project', value: 'something nobody has heard of' },
+      context(),
+    )
+    expect(updated[0]!.project).toEqual({
+      status: 'unresolved',
+      reason: 'no_match',
+      candidates: [],
+    })
+  })
+
+  it('re-matches a typed task answer against the project’s own charge codes', () => {
+    const entries = resolveEntries(
+      [extracted({ project_query: 'clayco', charge_code_hint: null })],
+      context(),
+    )
+    expect(entries[0]!.task.status).toBe('unresolved')
+
+    const updated = applyAnswer(
+      entries,
+      { entryId: 'e1', slot: 'task', value: 'scheduler' },
+      context(),
+    )
+    expect(updated[0]!.task).toMatchObject({ status: 'resolved', taskId: 't-sched' })
   })
 
   it('touches only the entry it names', () => {

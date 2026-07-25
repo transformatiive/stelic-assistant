@@ -5,7 +5,12 @@ import {
   recencyBoost,
   scoreProject,
 } from '@/lib/index/match'
-import { nameFragments, normaliseName, tokenCoverage } from '@/lib/index/normalise'
+import {
+  nameFragments,
+  normaliseName,
+  tokenCoverage,
+  tokens,
+} from '@/lib/index/normalise'
 
 const TODAY = '2026-07-22'
 
@@ -76,6 +81,13 @@ describe('normalisation', () => {
     expect(tokenCoverage('clayco', 'clayco ms data center')).toBe(1)
     expect(tokenCoverage('data center', 'clayco ms data center')).toBe(1)
     expect(tokenCoverage('clayco turner', 'clayco ms data center')).toBe(0.5)
+  })
+
+  it('drops "project" — this portal\'s own naming convention puts it in nearly every name', () => {
+    expect(tokens('etoe project')).toEqual(['etoe'])
+    expect(tokens('1020 - project farma')).toEqual(['1020', 'farma'])
+    // A query that is *only* the filler word has nothing left to score, same as an empty one.
+    expect(tokens('project')).toEqual([])
   })
 })
 
@@ -239,5 +251,54 @@ describe('matchProject', () => {
 
   it('scores a project against nothing when the query is empty', () => {
     expect(scoreProject('', INDEX[0]!, TODAY)).toBeNull()
+  })
+
+  describe('a naming convention that repeats "project" in almost every name', () => {
+    // The live bug, reproduced with the exact shapes from the field report: every project at
+    // this portal is named "<code> - Project <name>", so the literal word "project" used to
+    // be enough on its own to drag every one of them into the ambiguous bucket — the bot asked
+    // about "etoe project" and offered four projects with nothing in common with "etoe".
+    const NAMED_LIKE_THE_PORTAL: IndexedProject[] = [
+      {
+        projectId: 'p1',
+        projectName: '001047 - 1030 - Dummy Project',
+        accountName: 'Bristol Bay Construction Holdings, LLC',
+      },
+      {
+        projectId: 'p2',
+        projectName: '1001 - 1001 - Project Sabal - AKN Data Center',
+        accountName: 'Miller Electric Company',
+      },
+      {
+        projectId: 'p3',
+        projectName: '1006 - 1006 - Project Sabal - AKN Data Center',
+        accountName: 'Environmental Air Systems',
+      },
+      {
+        projectId: 'p4',
+        projectName: '1020 - 1020 - Project Farma',
+        accountName: '1020 - Project Farma',
+      },
+    ]
+
+    it('does not let "project" alone make every project a candidate', () => {
+      const result = matchProject('etoe project', NAMED_LIKE_THE_PORTAL, TODAY)
+      expect(result.status).toBe('no_match')
+    })
+
+    it('still matches on whatever the query actually names', () => {
+      const result = matchProject('sabal', NAMED_LIKE_THE_PORTAL, TODAY)
+      expect(result.status).toBe('ambiguous')
+      if (result.status === 'ambiguous') {
+        expect(result.candidates.map((c) => c.project.projectId).sort()).toEqual([
+          'p2',
+          'p3',
+        ])
+      }
+
+      const farma = matchProject('farma', NAMED_LIKE_THE_PORTAL, TODAY)
+      expect(farma.status).toBe('resolved')
+      if (farma.status === 'resolved') expect(farma.match.project.projectId).toBe('p4')
+    })
   })
 })
