@@ -150,6 +150,9 @@ export class ZohoClient {
           status: response.status,
           zohoCode: zohoErrorCode(body),
           path,
+          // Zoho does not always answer a spent quota with 429 — a live rebuild got exactly
+          // 100 successes then 45 plain 400s. This header is how to tell the two apart.
+          rateLimitRemaining: response.headers.get('ratelimit-remaining'),
           mode: this.mode,
         })
         throw new ZohoHttpError(response.status, body, requestId)
