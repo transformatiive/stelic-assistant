@@ -70,9 +70,15 @@ fifteen people.
 no user involved, because sessions last thirty days and a returning user may never trigger a
 page load that happens to be the first of the hour.
 
-The schedule is the `index-refresh-cron` Railway service. It builds
-`docker/cron.Dockerfile` from this repo and runs `scripts/warm-index.mjs` — the same script
-you would run by hand — and needs `APP_URL` and `CRON_SECRET` set on it.
+The schedule is the **`index-refresh`** Railway service. It builds `docker/cron.Dockerfile`
+from this repo and runs `scripts/warm-index.mjs` — the same script you would run by hand —
+and needs `APP_URL` and `CRON_SECRET` set on it.
+
+There is an older **`index-refresh-cron`** service in the same project that is dead and should
+be deleted. It is the broken `curlimages/curl` one described below; it was replaced rather
+than repaired because Railway will not convert a service's source from a Docker image to a
+repo — the API accepts the change, reports success, and keeps deploying the old image. Until
+someone deletes it, it fires a no-op twice a day at zero cost.
 
 **The command is in the Dockerfile's `ENTRYPOINT`, not in the service's start command, and
 must stay there.** When the service ran a bare `curlimages/curl` image, Railway dropped the
