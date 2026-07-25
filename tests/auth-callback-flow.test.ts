@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { completeCallback, type CallbackPorts } from '@/lib/auth/callback-flow'
 import { encrypt } from '@/lib/auth/crypto'
+import { appOrigin } from '@/lib/auth/request'
 import { AUTH_MESSAGES } from '@/lib/auth/messages'
 import {
   OAUTH_STATE_MAX_AGE_SECONDS,
@@ -275,5 +276,26 @@ describe('completeCallback', () => {
       code: 'the-code',
       codeVerifier: 'the-verifier',
     })
+  })
+})
+
+describe('appOrigin', () => {
+  it('takes the public origin from the redirect URI, not from the request', () => {
+    // Behind Railway's proxy the container sees http://localhost:8080, so a redirect built
+    // from the incoming request lands the browser on localhost. Caught by a live smoke test.
+    expect(
+      appOrigin('https://stelic-assistant-production.up.railway.app/api/auth/callback'),
+    ).toBe('https://stelic-assistant-production.up.railway.app')
+  })
+
+  it('drops the path, so it can be used as a base for any route', () => {
+    const origin = appOrigin('https://example.com/api/auth/callback')
+    expect(new URL('/login', origin).toString()).toBe('https://example.com/login')
+  })
+
+  it('keeps a non-default port, which local development needs', () => {
+    expect(appOrigin('http://localhost:3000/api/auth/callback')).toBe(
+      'http://localhost:3000',
+    )
   })
 })

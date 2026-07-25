@@ -8,7 +8,7 @@ import { logAuthEvent } from '@/lib/auth/log'
 import { sessionCookieOptions } from '@/lib/auth/session'
 import { createSession, saveTokens, upsertUser } from '@/lib/auth/store'
 import { exchangeCode, fetchIdentity, fetchProfile } from '@/lib/auth/zoho-oauth'
-import { clientIpFrom, readCookie } from '@/lib/auth/request'
+import { appOrigin, clientIpFrom, readCookie } from '@/lib/auth/request'
 
 /**
  * `GET /api/auth/callback` — finish the handshake (tasks 2.2, 2.4).
@@ -24,6 +24,8 @@ export async function GET(request: Request): Promise<NextResponse> {
   const config = loadConfig()
   const requestId = randomUUID()
   const url = new URL(request.url)
+  // The public origin, never the request's — behind Railway's proxy that is localhost:8080.
+  const origin = appOrigin(config.ZOHO_REDIRECT_URI)
   const now = new Date()
 
   const cookieHeader = request.headers.get('cookie') ?? ''
@@ -91,14 +93,14 @@ export async function GET(request: Request): Promise<NextResponse> {
   }
 
   if (outcome.status === 'error') {
-    const target = new URL('/login', url.origin)
+    const target = new URL('/login', origin)
     // A reason code, not a sentence: the login page owns the wording, and a message in a
     // query string is a message an attacker can choose.
     target.searchParams.set('error', outcome.reason)
     return clearHandshake(NextResponse.redirect(target, { status: 302 }))
   }
 
-  const response = NextResponse.redirect(new URL(outcome.returnTo, url.origin), {
+  const response = NextResponse.redirect(new URL(outcome.returnTo, origin), {
     status: 302,
   })
   const cookie = sessionCookieOptions(

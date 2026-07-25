@@ -16,6 +16,19 @@ export function clientIpFrom(headers: Headers): string | null {
 }
 
 /**
+ * The app's own public origin, taken from the configured redirect URI.
+ *
+ * Not from `request.url`. Behind Railway's proxy the container sees `http://localhost:8080`,
+ * so building a redirect against the incoming origin sends the browser to localhost — which
+ * is exactly what a live smoke test of the callback did before this existed. The redirect URI
+ * is the one value guaranteed to be the public origin: Zoho refuses the whole flow unless it
+ * matches the registered one character for character, and config validates it as https.
+ */
+export function appOrigin(redirectUri: string): string {
+  return new URL(redirectUri).origin
+}
+
+/**
  * Read one cookie out of a raw `Cookie` header.
  *
  * Route handlers reach for this rather than `next/headers` so the same code is callable from
