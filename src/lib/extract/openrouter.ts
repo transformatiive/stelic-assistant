@@ -95,8 +95,8 @@ export type GatewayCallConfig = {
 
 /**
  * The retry and error-mapping shared by every caller that sends a tool-choice-required chat
- * completion to OpenRouter — the timesheet extractor below, and the lighter continuation
- * classifier in `lib/chat/continuation.ts` that reads a pending draft's free-text answers.
+ * completion to OpenRouter — the timesheet extractor below, and every step of the
+ * conversation agent in `lib/chat/agent.ts`.
  *
  * One request id ties the header sent to the log line a failure produces, across the retry. A
  * 402 will still be a 402 in two seconds, and a schema failure will reproduce, so only 429/5xx
