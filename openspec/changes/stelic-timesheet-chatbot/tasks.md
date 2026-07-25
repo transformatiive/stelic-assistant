@@ -426,13 +426,23 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
 
 ## 6. Commit pipeline
 
-- [~] 6.1 Idempotency key derivation + unique constraint enforcement
-      — derivation done in `lib/commit/idempotency.ts`, normalising hours and description so
-      `8` vs `8.00` and stray whitespace cannot produce two keys for one booking. The unique
-      constraint is already in the Prisma schema; enforcement lands with the commit pipeline
-- [ ] 6.2 `CommitLog` write-before-call, update-after-response
-- [ ] 6.3 Create time log in Zoho with correct `MM-DD-YYYY` date and `hh:mm` hours
-- [ ] 6.4 Per-entry result aggregation; partial-failure reporting; retry-failed-only path
+- [x] 6.1 Idempotency key derivation + unique constraint enforcement
+      — derivation in `lib/commit/idempotency.ts`, normalising hours and description so
+      `8` vs `8.00` and stray whitespace cannot produce two keys for one booking. Enforced in
+      `lib/commit/commit.ts`: the losing insert is how a repeat is *detected*, so the answer
+      comes from our own ledger rather than from asking Zoho what it already has
+- [x] 6.2 `CommitLog` write-before-call, update-after-response
+      — a row that survives as `pending` says "a log may exist in Zoho for this". A retry
+      against a `pending` row is refused rather than attempted: an orphan a human can delete
+      is recoverable, two invoiced logs are not
+- [x] 6.3 Create time log in Zoho with correct `MM-DD-YYYY` date and `hh:mm` hours
+      — `lib/zoho/timelogs.ts`, with delete and per-task reads alongside it. An accepted write
+      whose response cannot be parsed is recorded as a **success with no log id**, because
+      calling it a failure invites the retry that double-books; undo is what degrades
+- [x] 6.4 Per-entry result aggregation; partial-failure reporting; retry-failed-only path
+      — three entries where the second fails log two. Rate limiting and an expired credential
+      stop the run instead, since they fail every remaining entry identically; the untried
+      ones come back as `skipped` rather than `failed`
 - [ ] 6.5 `/api/drafts/{id}/confirm` — re-read the draft server-side, ignore any client-sent
       entry data
 - [ ] 6.6 `/api/drafts/{id}/cancel`

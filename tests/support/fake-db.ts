@@ -57,6 +57,42 @@ export type CommitLogRow = {
   projectId: string
   status: string
   logDate: Date
+  /**
+   * The rest of the row, only populated by the commit pipeline's own tests.
+   *
+   * Optional because the index-store tests seed recency with the four fields above and
+   * nothing else — a booking's ledger row is not what they are about.
+   */
+  id?: string
+  draftId?: string
+  idempotencyKey?: string
+  projectName?: string
+  taskId?: string
+  taskName?: string
+  hoursDecimal?: number
+  billable?: boolean
+  description?: string
+  zohoLogId?: string | null
+  zohoResponse?: unknown
+  errorMessage?: string | null
+  sourceMessageId?: string
+  createdAt?: Date
+  completedAt?: Date | null
+}
+
+/**
+ * What Prisma throws when a unique constraint rejects an insert.
+ *
+ * The pipeline recognises `P2002` and nothing else about it, so this carries the code and
+ * skips the rest of `PrismaClientKnownRequestError` — importing the real class would drag
+ * the generated runtime into a unit test for no gain.
+ */
+export class FakeUniqueViolation extends Error {
+  readonly code = 'P2002'
+  constructor(target: string) {
+    super(`Unique constraint failed on ${target}`)
+    this.name = 'FakeUniqueViolation'
+  }
 }
 
 export type ServiceTokenRow = {
@@ -309,6 +345,48 @@ export class FakeDb {
         projectId,
         _max: { logDate },
       }))
+    },
+
+    // The unique constraint on `idempotency_key` is the whole point of the pipeline's
+    // double-book protection, so the fake enforces it rather than accepting every insert.
+    create: async ({ data }: { data: Partial<CommitLogRow> }) => {
+      if (
+        data.idempotencyKey !== undefined &&
+        this.commitLogs.some((r) => r.idempotencyKey === data.idempotencyKey)
+      ) {
+        throw new FakeUniqueViolation('CommitLog.idempotency_key')
+      }
+      const row = {
+        status: 'pending',
+        zohoLogId: null,
+        errorMessage: null,
+        completedAt: null,
+        createdAt: new Date('2026-07-25T12:00:00Z'),
+        ...data,
+        id: `commit_${this.nextId++}`,
+      } as CommitLogRow
+      this.commitLogs.push(row)
+      return { id: row.id }
+    },
+
+    findUnique: async ({ where }: { where: { idempotencyKey?: string; id?: string } }) =>
+      this.commitLogs.find(
+        (r) =>
+          (where.idempotencyKey !== undefined &&
+            r.idempotencyKey === where.idempotencyKey) ||
+          (where.id !== undefined && r.id === where.id),
+      ) ?? null,
+
+    update: async ({
+      where,
+      data,
+    }: {
+      where: { id: string }
+      data: Partial<CommitLogRow>
+    }) => {
+      const row = this.commitLogs.find((r) => r.id === where.id)!
+      Object.assign(row, data)
+      return row
     },
   }
 
