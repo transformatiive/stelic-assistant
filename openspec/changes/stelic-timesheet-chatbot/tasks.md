@@ -461,13 +461,23 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
       id, so a crafted request cannot delete an arbitrary log. "Same day" means the day of the
       **commit**, in the person's own zone: backdating yesterday's hours this morning is
       undoable this morning
-- [ ] 6.8 Week read-back: `/api/entries/week` grouped by day with total
-- [ ] 6.11 Establish a working week read-back contract. The week runs **Sunday–Saturday**:
-      the portal's `startday_of_week` is `sunday`. The portal-wide
-      `GET /logs?users_list=…&view_type=custom_date&custom_date=…` returns
-      `6891 "Given URL is wrong"` (verified, both parameter shapes). Find the correct call or
-      build the week view from per-project log reads, which are verified working. 6.8 depends
-      on this
+- [x] 6.8 Week read-back: `/api/entries/week` grouped by day with total — all seven days
+      always present, Sunday first, including the empty ones. A week that silently omits
+      Thursday reads as "nothing to see"; a Thursday showing `0h` answers the question that
+      was asked. The per-day total is **Zoho's own**, not a re-sum of the entries: if the two
+      ever disagree, the portal's number is the one the person sees in the grid. Runs on the
+      user's own credential, not the shared service one — it is their own timesheet, and a
+      per-person read on the shared credential would spend the index rebuild's rate limit
+- [x] 6.11 Establish a working week read-back contract. The week runs **Sunday–Saturday**:
+      the portal's `startday_of_week` is `sunday`
+      — **found: it was a trailing slash.** `GET .../logs/` returns `6891`; `GET .../logs`
+      returns `200`. Nine parameter shapes were tried against the trailing-slash form and all
+      nine failed identically, which is what made this look like a missing endpoint. Two
+      further findings, both silent failures rather than errors: `users_list` takes the
+      **zuid**, not the zpuid — a zpuid returns `204`, an *empty week*, so the wrong id reads
+      as "you logged nothing"; and a tasklog carries no `log_date`, so **the day comes from
+      the enclosing group**, which for a backdated entry is a different day from
+      `created_date`. Full contract in `design.md` §5
 - [ ] 6.12 Write `billing_role` after creating a log. Spike 1.4(b) proved
       `stampRoleOnTimelog` does not fire for API-created logs, so a log this app creates is
       **not** indistinguishable from a UI one until the app stamps the field itself. Derive

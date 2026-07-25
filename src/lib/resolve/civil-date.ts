@@ -80,6 +80,19 @@ export function weekdayOf(date: CivilDate): Weekday {
   return dow as Weekday
 }
 
+/**
+ * The Sunday on or before this date.
+ *
+ * **Sunday, not Monday.** The portal's `startday_of_week` is `sunday`, and a week view that
+ * disagreed with the grid people check their hours against would be worse than no week view:
+ * the same seven days would show two different totals.
+ */
+export function startOfWeek(date: CivilDate): CivilDate {
+  // `weekdayOf` is ISO — 7 is Sunday, which is the day we want to land on.
+  const iso = weekdayOf(date)
+  return addDays(date, iso === 7 ? 0 : -iso)
+}
+
 export function compare(a: CivilDate, b: CivilDate): number {
   return toEpochDay(a) - toEpochDay(b)
 }

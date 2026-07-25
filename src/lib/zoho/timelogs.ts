@@ -32,6 +32,10 @@ export type TimeLog = {
   ownerZuid: string | null
   ownerName: string | null
   taskId: string | null
+  /** Present on the week read, which is where a log has to name itself to a person. */
+  taskName: string | null
+  projectId: string | null
+  projectName: string | null
   /** `api` for anything this app wrote. The undo guard reads it (task 6.7). */
   addedVia: string | null
   approvalStatus: string | null
@@ -92,7 +96,14 @@ const logSchema = z
     owner_name: z.string().optional(),
     added_via: z.string().optional(),
     approval_status: z.string().optional(),
-    task: z.object({ id_string: z.string().optional() }).partial().optional(),
+    task: z
+      .object({ id_string: z.string().optional(), name: z.string().optional() })
+      .partial()
+      .optional(),
+    project: z
+      .object({ id_string: z.string().optional(), name: z.string().optional() })
+      .partial()
+      .optional(),
   })
   .passthrough()
 
@@ -130,6 +141,9 @@ export function readTimeLog(raw: unknown): TimeLog | null {
     ownerZuid: data.owner_id === undefined ? null : String(data.owner_id),
     ownerName: data.owner_name ?? null,
     taskId: data.task?.id_string ?? null,
+    taskName: data.task?.name ?? null,
+    projectId: data.project?.id_string ?? null,
+    projectName: data.project?.name ?? null,
     addedVia: data.added_via ?? null,
     approvalStatus: data.approval_status ?? null,
   }
@@ -241,5 +255,102 @@ export async function listTaskLogs(
     .filter((log): log is TimeLog => log !== null)
 }
 
+/**
+ * One person's logs for the week containing a date (tasks 6.8, 6.11).
+ *
+ * **The path has no trailing slash, and that is the whole contract.** `logs/` answers
+ * `6891 "Given URL is wrong"`; `logs` answers `200`. Every documented parameter shape was
+ * tried against the trailing-slash form and all of them failed, which is what made this look
+ * like an unavailable endpoint for two rounds of investigation. It was a slash.
+ *
+ * Verified live on 2026-07-25:
+ *
+ * - `users_list` takes the **zuid**, not the zpuid. A zpuid returns `204` — an empty week
+ *   rather than an error, so getting it wrong looks like "you logged nothing" and would have
+ *   been very hard to notice. `User.zohoUserId` is the zuid.
+ * - `component_type` and `users_list` are **required**; omitting either gives
+ *   `6831 "Input Parameter Missing"`. `bill_status` is optional.
+ * - `view_type=custom_date` does not work in any form tried, so an arbitrary range is not
+ *   available — a week at a time is what the API offers, which is what CHAT-12 asks for.
+ * - No logs in the week gives `204` with an empty body.
+ *
+ * Zoho groups by day and totals each day itself, which is exactly the shape the week view
+ * needs — so this returns the grouping rather than flattening and regrouping it.
+ */
+export type DayLogs = {
+  /** ISO `YYYY-MM-DD`. */
+  date: string
+  /** Zoho's own `hh:mm` total for the day, converted. */
+  hours: number
+  logs: TimeLog[]
+}
+
+export async function listWeekLogs(
+  client: ZohoClient,
+  input: {
+    /** The person's Zoho zuid. */
+    zuid: string
+    /** Any date inside the wanted week, ISO `YYYY-MM-DD`. */
+    date: string
+  },
+): Promise<DayLogs[]> {
+  const body = await client.requestJson<unknown>('logs', {
+    query: {
+      users_list: input.zuid,
+      view_type: 'week',
+      date: formatZohoDate(input.date),
+      bill_status: 'All',
+      component_type: 'task',
+    },
+  })
+
+  return readDayGroups(body)
+}
+
+/** `hh:mm` → decimal hours. Zoho totals each day in this form. */
+export function parseZohoHours(value: string): number {
+  const match = /^(\d+):(\d{1,2})$/.exec(value.trim())
+  if (!match) return 0
+  return Number(match[1]) + Number(match[2]) / 60
+}
+
+const dayGroupSchema = z
+  .object({
+    date: z.string().optional(),
+    total_hours: z.string().optional(),
+    tasklogs: z.array(z.unknown()).optional(),
+  })
+  .passthrough()
+
+function readDayGroups(body: unknown): DayLogs[] {
+  if (!body || typeof body !== 'object') return []
+  const timelogs = (body as Record<string, unknown>).timelogs
+  if (!timelogs || typeof timelogs !== 'object') return []
+  const days = (timelogs as Record<string, unknown>).date
+  if (!Array.isArray(days)) return []
+
+  const out: DayLogs[] = []
+  for (const raw of days) {
+    const parsed = dayGroupSchema.safeParse(raw)
+    if (!parsed.success || !parsed.data.date) continue
+    const date = parseZohoDate(parsed.data.date)
+    if (!date) continue
+
+    const logs = (parsed.data.tasklogs ?? [])
+      .map(readTimeLog)
+      .filter((log): log is TimeLog => log !== null)
+      // The day's date lives on the group, not the log — each log carries only the day it
+      // was *created*, which for a backdated entry is a different day entirely.
+      .map((log) => ({ ...log, date }))
+
+    out.push({
+      date,
+      hours: parsed.data.total_hours ? parseZohoHours(parsed.data.total_hours) : 0,
+      logs,
+    })
+  }
+  return out
+}
+
 /** Exported for the tests, which assert the envelope handling directly. */
-export const _internal = { extractLogs }
+export const _internal = { extractLogs, readDayGroups }

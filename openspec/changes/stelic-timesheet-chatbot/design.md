@@ -617,7 +617,7 @@ marked otherwise.
 | Tasks in a project | `GET projects/{projectId}/tasks/?index=1&range=100` | ✅ `200` |
 | Portal users | `GET users/` | ❌ **`403` `{"code":6403,"message":"Invalid OAuth scope."}`** |
 | Project users | `GET projects/{projectId}/users/` | ❌ **`403`, same** — no workaround at project scope |
-| My logs for a range | `GET logs?users_list=…&view_type=custom_date&custom_date=…` | ❌ **`400` `{"code":6891,"message":"Given URL is wrong"}`** — contract unknown, see below |
+| My logs for a week | `GET logs?users_list={zuid}&view_type=week&date={MM-DD-YYYY}&component_type=task&bill_status=All` — **no trailing slash on `logs`** | ✅ `200`, or `204` with no body for an empty week |
 
 **Time-log response shape** (what a created log returns, and what the app must read):
 `id_string`, `owner_id` (a zuid string), `owner_name`, `added_by: { zpuid, name, zuid }`,
@@ -706,10 +706,35 @@ learns nothing, which is what happened here.
 approving anything. This has a direct consequence for undo — see the timesheet-chat spec,
 CHAT-11.
 
-**The week read-back has no verified contract yet.** Both attempted forms of the portal-wide
-`/logs/` call returned `6891 "Given URL is wrong"`. Task 6.8 cannot be built against §5 as
-previously written; the working alternative is per-project or per-task log reads, which are
-verified above. Raised as task 6.11.
+**The week read-back contract, found 2026-07-25 (task 6.11 — resolved). It was a trailing
+slash.**
+
+`GET .../logs/` returns `6891 "Given URL is wrong"`. `GET .../logs` returns `200`. Nine
+parameter shapes were tried against the trailing-slash form — every documented combination of
+`view_type`, `bill_status`, `component_type`, and both `users_list` id types — and all nine
+failed identically, which is what made this look like a missing endpoint rather than a typo.
+A control call in the same run succeeded, so it was never auth.
+
+The working call:
+
+```
+GET restapi/portal/911636649/logs
+    ?users_list={zuid}&view_type=week&date={MM-DD-YYYY}&component_type=task&bill_status=All
+```
+
+| Detail | Finding |
+|---|---|
+| `users_list` | Takes the **zuid**, not the zpuid. A zpuid returns `204` — an *empty week*, not an error, so the wrong id reads as "you logged nothing" |
+| Required | `users_list` and `component_type`; omitting either gives `6831 "Input Parameter Missing"` |
+| Optional | `bill_status` — omitting it returns the same rows |
+| `view_type=custom_date` | Does not work in any form tried (`6831` or `6832 "Invalid JSON syntax"`). An arbitrary range is not available; a week at a time is what the API offers, which is what CHAT-12 asks for |
+| Empty week | `204` with no body |
+| Shape | `{ timelogs: { date: [ { date, total_hours: "8:00", tasklogs: [...] } ] } }` — **already grouped by day, with Zoho's own per-day total** |
+| Log fields | `id_string`, `notes`, `owner_id` (zuid), `owner_name`, `project: {name, id_string}`, `task: {name, id_string}`, `task_list`, `hours`/`minutes`/`total_minutes`/`hours_display`, `bill_status`, `approval_status`, `custom_fields`, `created_date` |
+| No `log_date` | A tasklog carries only `created_date`. **The day comes from the enclosing group** — for a backdated entry those are different days |
+
+The per-project form is the mirror image: `projects/{id}/logs/` **requires** the trailing
+slash and the same parameters, and answers `204` when that project has nothing in the week.
 
 > **Spike 1.4 — done, 2026-07-25.** (a) A log **can** be created with an owner other than the
 > token holder, using `owner=<zuid>` (see §2). (b) An API-created log does **not** get
