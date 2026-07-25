@@ -260,6 +260,11 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
       spends no Zoho call). Projects absent from a build are deleted, so the matcher cannot
       keep offering something nobody can log to. `lastLoggedAt` is deliberately excluded from
       the upsert: it is the user's own history and a portal refresh must not wipe it.
+      **"Build on login" is now automatic**: `app/index-warmer.tsx` checks staleness on the
+      signed-in page and rebuilds if needed. It runs from the browser, not the page render — a
+      rebuild walks every project and its tasks, and blocking first paint on a minute of Zoho
+      calls would make signing in feel broken. The outcome is logged either way, so a failure
+      is visible in the server logs rather than only in whoever's browser saw it.
       The route names `403 Invalid OAuth scope` as its own failure reason rather than a generic
       upstream error — it is the single most likely thing to be wrong on a first run, and task
       0.2 already hit it once
@@ -344,21 +349,53 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
       — `lib/resolve/description.ts`. Rejects filler *phrases* too ("misc stuff and things"),
       which a length check alone would pass, while accepting text that merely contains a
       filler word ("rebar inspection and misc punch list")
-- [ ] 5.4 Task resolver: PCCR lookup by (deal, CRM user) → labour category → task match;
+- [~] 5.4 Task resolver: PCCR lookup by (deal, CRM user) → labour category → task match;
       handle none / one / many
-- [ ] 5.5 Slot-state machine: which slot to ask next, ordered project → task → date → hours →
+      — **Not the PCCR chain, and not yet.** That chain needs a CRM user id, which nothing
+      resolves (task 2.5 is unstarted), and a rate sheet, which the live probe found on only
+      **22 of 145** projects. Building it now would make the common case depend on data that
+      mostly is not there.
+      `resolveTask` instead uses the project's own task list, which every project has: exactly
+      one task resolves silently, several become chips labelled with the tasklist and **never
+      a rate**, none becomes an entry with something to say rather than a shrug. A
+      `charge_code_hint` the user actually said narrows the list first, and falls back to the
+      full list rather than to nothing when it matches nothing.
+      Revisit when 2.5 lands and the rate-sheet coverage is understood
+- [x] 5.5 Slot-state machine: which slot to ask next, ordered project → task → date → hours →
       description, entry by entry
-- [ ] 5.6 Draft persistence, expiry, and re-resolution after each answer
-- [ ] 5.7 Warning engine: duplicate similarity, backdating. **No daily cap** — abandoned as a
+      — `lib/resolve/slots.ts`. The order is not cosmetic: the task list depends on the
+      project, so asking about hours first risks asking twice. Entries are finished one at a
+      time — jumping between them is how a two-entry conversation becomes confusing.
+      A **blocked** slot is never a question. A future date has no answer the user could give
+      that makes it acceptable, so it is reported and the entry drops out of the commit
+- [x] 5.6 Draft persistence, expiry, and re-resolution after each answer
+      — `lib/resolve/draft.ts`. Re-resolution is targeted, not blanket: choosing a project
+      recomputes the **task** slot, because the task list belongs to the project and keeping
+      the old one would log to the wrong task. Nothing else cascades, so nothing else is
+      touched — re-running every slot would risk turning an answered field back into a
+      question. Answers are re-validated rather than trusted; typing "stuff" as a description
+      is still rejected. Drafts expire after two hours, checked on read rather than swept by
+      a job
+- [x] 5.7 Warning engine: duplicate similarity, backdating. **No daily cap** — abandoned as a
       policy (open question 4); do not sum a user's daily total to warn on it
-- [ ] 5.9 Store each user's Zoho **zuid** alongside their portal user id, from `login_id` on
+      — `lib/resolve/warnings.ts`. A duplicate is same project, same task, same day **and** a
+      description scoring ≥ 0.8; same-day-same-task alone is not enough, because two hours of
+      drafting in the morning and three in the afternoon are two honest entries. A test
+      asserts that 23 hours across two entries produces **no** warning, so the abandoned cap
+      cannot creep back in as a "helpful" nudge
+- [x] 5.9 Store each user's Zoho **zuid** alongside their portal user id, from `login_id` on
       `GET /restapi/portals/`. The `owner` parameter on a time-log write takes a zuid, not a
       zpuid (spike 1.4), so the commit pipeline needs it on the `User` row
+      — done with task 2.4: the callback writes `login_id` to both `zohoUserId` and
+      `zohoProjectsUserId`, and a test asserts it
 - [ ] 5.10 Settle the timezone. The portal is configured `America/Los_Angeles` but
       `DEFAULT_TIMEZONE` is `America/New_York` (open question 11). Date resolution is already
       timezone-parameterised, so this is a configuration and per-user-preference decision, not
       a code change — but getting it wrong shifts logs by a day either side of midnight
-- [ ] 5.8 Unit tests for the full resolver against the spec scenarios
+- [x] 5.8 Unit tests for the full resolver against the spec scenarios
+      — 45 covering entry resolution, the slot machine and the warnings, on a fixture built
+      from **live** project shapes (`1066 - 1066 - Clayco EKI Data Center`,
+      `Google LLC — 1080 - …`) rather than tidy invented ones
 
 ## 6. Commit pipeline
 

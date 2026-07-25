@@ -1,0 +1,72 @@
+'use client'
+
+import { useEffect, useState } from 'react'
+
+/**
+ * Builds the project index when it is stale (task 3.4: "build on login, refresh hourly").
+ *
+ * Runs from the browser rather than from the page render for one reason: a full rebuild walks
+ * every project and its tasks, and blocking the first paint on a minute of Zoho calls would
+ * make signing in feel broken. The page renders immediately, this catches up behind it.
+ *
+ * The `GET` costs no Zoho call, so the common case — a warm index — is one cheap request.
+ */
+
+type Status =
+  | { kind: 'idle' }
+  | { kind: 'building' }
+  | { kind: 'built'; projects: number }
+  | { kind: 'failed'; detail: string }
+
+export function IndexWarmer() {
+  const [status, setStatus] = useState<Status>({ kind: 'idle' })
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function warm() {
+      try {
+        const check = await fetch('/api/index/refresh', { credentials: 'same-origin' })
+        if (!check.ok) return
+        const { stale } = (await check.json()) as { stale: boolean }
+        if (!stale || cancelled) return
+
+        setStatus({ kind: 'building' })
+        const built = await fetch('/api/index/refresh', {
+          method: 'POST',
+          credentials: 'same-origin',
+        })
+        const result = (await built.json()) as {
+          ok?: boolean
+          written?: number
+          detail?: string
+        }
+        if (cancelled) return
+
+        setStatus(
+          result.ok
+            ? { kind: 'built', projects: result.written ?? 0 }
+            : { kind: 'failed', detail: result.detail ?? 'The rebuild failed.' },
+        )
+      } catch {
+        if (!cancelled)
+          setStatus({ kind: 'failed', detail: 'The rebuild could not run.' })
+      }
+    }
+
+    void warm()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  if (status.kind === 'idle') return null
+
+  return (
+    <p className="text-sm opacity-70" role="status">
+      {status.kind === 'building' && 'Loading your projects from Zoho…'}
+      {status.kind === 'built' && `${status.projects} projects ready.`}
+      {status.kind === 'failed' && status.detail}
+    </p>
+  )
+}

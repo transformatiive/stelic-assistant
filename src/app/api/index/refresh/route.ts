@@ -58,7 +58,19 @@ export async function POST(request: Request): Promise<NextResponse> {
 
     return NextResponse.json({ ok: true, ...result.stats, ...saved, recency })
   } catch (error) {
-    return NextResponse.json(describe(error), { status: 502 })
+    const described = describe(error)
+    // Logged on every path, not just the unrecognised one: this route is triggered from a
+    // browser and its outcome is otherwise invisible to anyone reading the server logs.
+    console.error(
+      JSON.stringify({
+        event: 'index.rebuild_failed',
+        userId: session.user.id,
+        reason: described.reason,
+        error: error instanceof Error ? `${error.name}: ${error.message}` : 'unknown',
+        ms: Date.now() - startedAt,
+      }),
+    )
+    return NextResponse.json(described, { status: 502 })
   }
 }
 
@@ -104,11 +116,5 @@ function describe(error: unknown): { ok: false; reason: string; detail: string }
         : `Zoho responded ${error.status}.`,
     }
   }
-  console.error(
-    JSON.stringify({
-      event: 'index.rebuild_failed',
-      error: error instanceof Error ? error.name : 'unknown',
-    }),
-  )
   return { ok: false, reason: 'unknown', detail: 'The rebuild failed.' }
 }
