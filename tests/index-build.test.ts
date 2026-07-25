@@ -209,9 +209,10 @@ describe('buildProjectIndex', () => {
 
     expect(stats.projectsWithTasksFetched).toBe(1)
     expect(seen.some((u) => u.includes('/projects/p3/tasks/'))).toBe(false)
-    // The capped project is still indexed and still matchable — it just has no charge codes.
+    // The capped project is still indexed and still matchable. Its charge codes are `null`,
+    // not `[]` — "not read this run", so a stored list is not overwritten with nothing.
     expect(rows[1]!.projectId).toBe('p3')
-    expect(rows[1]!.chargeCodes).toEqual([])
+    expect(rows[1]!.chargeCodes).toBeNull()
   })
 
   it('reports progress so a long rebuild is observable', async () => {
@@ -359,7 +360,7 @@ describe('one unreadable project does not lose the rest', () => {
     const { rows } = await buildProjectIndex(portalWithBadProject(), { paceMs: 0 })
     const bad = rows.find((r) => r.projectId === 'p-bad')!
     expect(bad.projectName).toBe('Bad')
-    expect(bad.chargeCodes).toEqual([])
+    expect(bad.chargeCodes).toBeNull()
   })
 
   it('does not fail silently — the caller is told which project', async () => {
@@ -418,5 +419,109 @@ describe('pacing, because a spent quota is not a 429', () => {
       },
     })
     expect(waits).toEqual([])
+  })
+})
+
+describe('a Zoho throttle stops the reads but not the index', () => {
+  // Zoho reports a spent quota as a 400 carrying URL_ROLLING_THROTTLES_LIMIT_EXCEEDED, and
+  // locks the endpoint for about a quarter of an hour. Verified live: a run that pushed on
+  // regardless turned a partial result into 145 failures and left the portal locked for the
+  // next run too.
+  const THROTTLE_BODY = JSON.stringify({
+    error: {
+      status_code: 400,
+      title: 'URL_ROLLING_THROTTLES_LIMIT_EXCEEDED',
+      details: { message: 'Cannot execute more than 100 requests per API in 2 minutes.' },
+    },
+  })
+
+  function portalThrottlingAfter(successes: number) {
+    let taskCalls = 0
+    const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.includes('/tasks/')) {
+        taskCalls += 1
+        if (taskCalls > successes) {
+          return new Response(THROTTLE_BODY, {
+            status: 400,
+            headers: { 'retry-after': '1033' },
+          })
+        }
+        return new Response(
+          JSON.stringify({ tasks: [{ id_string: 't1', name: 'Design' }] }),
+          {
+            headers: { 'content-type': 'application/json' },
+          },
+        )
+      }
+      if (url.includes('/projects/?')) {
+        return new Response(
+          JSON.stringify({
+            projects: Array.from({ length: 4 }, (_, i) => ({
+              id_string: `p${i}`,
+              name: `P${i}`,
+              status: 'active',
+            })),
+          }),
+          { headers: { 'content-type': 'application/json' } },
+        )
+      }
+      return new Response(JSON.stringify({ data: [] }), {
+        headers: { 'content-type': 'application/json' },
+      })
+    })
+    const make = (base: string) =>
+      new ZohoClient({ baseUrl: base, tokens: TOKENS, fetchImpl, maxRateLimitRetries: 0 })
+    return {
+      fetchImpl,
+      taskCallCount: () => taskCalls,
+      clients: {
+        projects: make('https://projectsapi.zoho.com/restapi/portal/911636649/'),
+        crm: make('https://www.zohoapis.com/crm/v8/'),
+      },
+    }
+  }
+
+  it('stops calling once locked, instead of sustaining the lockout', async () => {
+    const portal = portalThrottlingAfter(2)
+    await buildProjectIndex(portal.clients, { paceMs: 0 })
+
+    // Two successes, one throttle, then nothing — not four attempts.
+    expect(portal.taskCallCount()).toBe(3)
+  })
+
+  it('still indexes every project, so matching keeps working', async () => {
+    const { rows, stats } = await buildProjectIndex(portalThrottlingAfter(2).clients, {
+      paceMs: 0,
+    })
+
+    expect(rows.map((r) => r.projectId)).toEqual(['p0', 'p1', 'p2', 'p3'])
+    expect(stats.projectsIndexed).toBe(4)
+    expect(stats.projectsWithTasksFetched).toBe(2)
+  })
+
+  it('does not count a throttle as a per-project failure', async () => {
+    const { stats } = await buildProjectIndex(portalThrottlingAfter(2).clients, {
+      paceMs: 0,
+    })
+    expect(stats.projectsWithTaskFailures).toBe(0)
+    expect(stats.throttled).toEqual({ retryAfterSeconds: 1033 })
+  })
+
+  it('marks unread projects as null, not empty, so stored codes survive', async () => {
+    const { rows } = await buildProjectIndex(portalThrottlingAfter(2).clients, {
+      paceMs: 0,
+    })
+    expect(rows[0]!.chargeCodes).toHaveLength(1)
+    expect(rows[3]!.chargeCodes).toBeNull()
+  })
+
+  it('reports the lockout once, with how long it lasts', async () => {
+    const seen: (number | undefined)[] = []
+    await buildProjectIndex(portalThrottlingAfter(2).clients, {
+      paceMs: 0,
+      onThrottled: (error) => seen.push(error.retryAfterSeconds),
+    })
+    expect(seen).toEqual([1033])
   })
 })

@@ -6,6 +6,7 @@ import {
   type ZohoTask,
 } from '@/lib/zoho/projects'
 import type { ZohoClient } from '@/lib/zoho/client'
+import { ZohoRateLimitError } from '@/lib/zoho/errors'
 import { nameFragments } from './normalise'
 
 /**
@@ -34,7 +35,11 @@ export type IndexedProjectRow = {
   dealName: string | null
   accountName: string | null
   aliases: string[]
-  chargeCodes: ChargeCode[]
+  /**
+   * `null` means this run did not read them — not that the project has none. A throttled or
+   * capped rebuild must not overwrite charge codes it already had with an empty list.
+   */
+  chargeCodes: ChargeCode[] | null
 }
 
 /**
@@ -132,6 +137,8 @@ export type BuildOptions = {
   /** Milliseconds between task reads. Zero disables pacing; the tests rely on that. */
   paceMs?: number
   sleep?: (ms: number) => Promise<void>
+  /** Called once if Zoho locks the endpoint, after which no further tasks are fetched. */
+  onThrottled?: (error: ZohoRateLimitError) => void
 }
 
 export type BuildResult = {
@@ -143,6 +150,12 @@ export type BuildResult = {
     projectsWithTasksFetched: number
     /** Projects whose task list could not be read. Indexed anyway, without charge codes. */
     projectsWithTaskFailures: number
+    /**
+     * Set when Zoho locked the endpoint mid-run. Every project is still indexed and
+     * matchable; the ones after this point simply have no charge codes yet, and the next
+     * scheduled run picks them up.
+     */
+    throttled?: { retryAfterSeconds?: number }
     dealsResolved: number
     dealsRequested: number
     /** How many rows got a client name — from the project itself or from CRM. */
@@ -180,12 +193,16 @@ export async function buildProjectIndex(
   const rows: IndexedProjectRow[] = []
   let tasksFetched = 0
   let taskFailures = 0
+  let throttled: { retryAfterSeconds?: number } | undefined
 
   for (const [position, project] of projects.entries()) {
     const deal = project.crmDealId ? deals.get(project.crmDealId) : undefined
 
-    let chargeCodes: ChargeCode[] = []
-    if (position < limit) {
+    // `null` means "not fetched this run", which is different from "fetched and empty".
+    // `saveProjectIndex` leaves the stored codes alone for a null, so a throttled rebuild
+    // does not wipe charge codes it already had.
+    let chargeCodes: ChargeCode[] | null = null
+    if (position < limit && !throttled) {
       // Paced, not retried: a spent quota comes back as a 400 here, which no backoff can
       // recognise. Waiting before the call is the only thing that keeps the budget intact.
       if (position > 0 && pace > 0) await sleep(pace)
@@ -193,12 +210,25 @@ export async function buildProjectIndex(
         chargeCodes = toChargeCodes(await listTasks(clients.projects, project.id))
         tasksFetched += 1
       } catch (error) {
-        // One unreadable project must not cost the other 144. Seen live: after ~60 projects
-        // one answered 400 and the whole rebuild aborted, leaving the index empty.
-        // The project keeps its row and stays matchable; it just has no charge codes, which
-        // the task resolver already reports as "none available" and asks about.
-        taskFailures += 1
-        options.onTaskFailure?.(project, error)
+        // A throttle is different from a bad project. Once Zoho locks the endpoint — about
+        // a quarter of an hour — every further call is doomed and sustains the lockout, so
+        // the remaining task reads are abandoned rather than attempted. Verified live: a run
+        // that pushed on regardless turned a partial result into 145 failures and left the
+        // portal locked for the next run too.
+        if (error instanceof ZohoRateLimitError) {
+          // Stop fetching, but keep indexing: every project still gets a row and stays
+          // matchable, and the next scheduled run fills in the charge codes.
+          throttled = { retryAfterSeconds: error.retryAfterSeconds }
+          options.onThrottled?.(error)
+        }
+
+        // One unreadable project, on the other hand, must not cost the other 144. It keeps
+        // its row and stays matchable; it just has no charge codes, which the task resolver
+        // already reports as "none available" and asks about.
+        else {
+          taskFailures += 1
+          options.onTaskFailure?.(project, error)
+        }
       }
     }
 
@@ -224,6 +254,7 @@ export async function buildProjectIndex(
       projectsIndexed: rows.length,
       projectsWithTasksFetched: tasksFetched,
       projectsWithTaskFailures: taskFailures,
+      ...(throttled ? { throttled } : {}),
       dealsResolved: deals.size,
       dealsRequested: new Set(dealIds).size,
       projectsWithAccountName: rows.filter((r) => r.accountName).length,

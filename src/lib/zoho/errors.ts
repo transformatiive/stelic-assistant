@@ -30,11 +30,29 @@ export class ZohoAuthError extends ZohoError {
   }
 }
 
-/** 429 that survived the retry budget. */
+/**
+ * The quota is spent.
+ *
+ * Two ways to arrive here: a 429 that survived the retry budget, or a **400** carrying
+ * `URL_ROLLING_THROTTLES_LIMIT_EXCEEDED`, which is how Zoho Projects actually reports it.
+ * The second is not retryable in-request — the lockout runs to about a quarter of an hour,
+ * and `retryAfterSeconds` says how long.
+ */
 export class ZohoRateLimitError extends ZohoError {
   readonly attempts: number
-  constructor(attempts: number, requestId: string) {
-    super(`Zoho rate limited the request after ${attempts} attempts`, requestId)
+  readonly retryAfterSeconds?: number
+  constructor(
+    attempts: number,
+    requestId: string,
+    options: { retryAfterSeconds?: number } = {},
+  ) {
+    super(
+      options.retryAfterSeconds
+        ? `Zoho throttled the request; retry after ${options.retryAfterSeconds}s`
+        : `Zoho rate limited the request after ${attempts} attempts`,
+      requestId,
+    )
     this.attempts = attempts
+    this.retryAfterSeconds = options.retryAfterSeconds
   }
 }
