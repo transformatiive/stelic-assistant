@@ -696,7 +696,27 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
 - [ ] 10.6 Confirm an app-created log flows correctly into the existing invoice pipeline in a
       test billing period
 - [ ] 10.7 Install and use on a real iPhone and a real Android device
-- [ ] 10.8 Pilot with 3 Stelic users for one week; capture every message the bot mishandled
+- [~] 10.8 Pilot with 3 Stelic users for one week; capture every message the bot mishandled
+      — **first field report captured, not a full week yet.** A real conversation in
+      production surfaced four real bugs:
+      (1) `resolveDate` had no month-name parsing at all — "July 25th" fell through to
+      `unrecognised` with no wording that didn't hit the same gap again on retry. Fixed in
+      `src/lib/resolve/date.ts`, mirroring the existing bare-numeric "most recent occurrence"
+      convention for a year-less date.
+      (2) A typed answer to a question with no chips (date, hours, description) was posted to
+      `/api/chat` as a brand-new turn instead of to `/api/chat/action` as the answer to the
+      slot actually being asked about — so the model re-extracted from scratch and re-asked the
+      already-answered project question, forever. CHAT-7 already promises the same free-text
+      fallback on chip questions too, so the fix (`pendingQuestion`/`answer` in
+      `src/lib/chat/transcript.ts`, wired in `src/components/chat/chat.tsx`) covers both cases
+      by position in the transcript, not by trusting a stale `answered` flag.
+      (3) The browser-triggered index rebuild fired on ordinary hourly staleness, not only on a
+      genuinely empty index, so returning users saw "Loading your projects from Zoho…" on
+      almost every visit. Fixed in `src/app/index-warmer.tsx` — gated on `projects === 0`.
+      (4) The composer's send button sat a couple of pixels off from the input box
+      (`items-end` against a textarea whose own natural height exceeded its `min-h`). Fixed in
+      `src/components/chat/composer.tsx` (`items-center`).
+      The rest of the week is still open
 
 ## 11. Handover
 

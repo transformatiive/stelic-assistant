@@ -3,6 +3,7 @@ import {
   canSend,
   initialTranscript,
   noticeForStatus,
+  pendingQuestion,
   transcriptReducer,
   type TranscriptAction,
   type TranscriptState,
@@ -118,6 +119,90 @@ describe('chips', () => {
       asked,
     )
     expect(state.bubbles[0]!.text).toBe('Which day?')
+  })
+})
+
+describe('answering a pending question by typing', () => {
+  // A slot with no chips — date, hours, description — same as the live field report: "July
+  // 25th" was asked about, and the user typed "saturday" instead of tapping anything, because
+  // there was nothing to tap.
+  const question: TranscriptState = {
+    ...initialTranscript,
+    bubbles: [
+      {
+        id: 'a1',
+        role: 'assistant',
+        text: 'Which day was that?',
+        ui: { kind: 'question', draftId: 'd1', entryId: 'e1', slot: 'date', chips: [] },
+      },
+    ],
+  }
+
+  it('finds the pending question from the last bubble', () => {
+    expect(pendingQuestion(question)?.id).toBe('a1')
+  })
+
+  it('sees nothing pending once the bot has moved on to something else', () => {
+    const state = run([{ type: 'reply', id: 'a2', text: 'Got it.' }], question)
+    expect(pendingQuestion(state)).toBeNull()
+  })
+
+  it('sees nothing pending for a card that is not a question', () => {
+    const card: TranscriptState = {
+      ...initialTranscript,
+      bubbles: [{ id: 'a1', role: 'assistant', text: 'Here', ui: { kind: 'week' } }],
+    }
+    expect(pendingQuestion(card)).toBeNull()
+  })
+
+  it('echoes the typed answer and empties the composer, like an ordinary send', () => {
+    const state = run(
+      [
+        ...typed('saturday'),
+        { type: 'answer', id: 'u1', bubbleId: 'a1', text: 'saturday' },
+      ],
+      question,
+    )
+    expect(state.bubbles.at(-1)).toEqual({ id: 'u1', role: 'user', text: 'saturday' })
+    expect(state.draftText).toBe('')
+    expect(state.busy).toBe(true)
+  })
+
+  it('kills the question it answered, same as a chip tap would', () => {
+    const state = run(
+      [{ type: 'answer', id: 'u1', bubbleId: 'a1', text: 'saturday' }],
+      question,
+    )
+    expect(state.bubbles[0]!.answered).toBe(true)
+  })
+
+  it('clears a stale error the moment they answer, same as an ordinary send', () => {
+    const state = run([{ type: 'answer', id: 'u1', bubbleId: 'a1', text: 'saturday' }], {
+      ...question,
+      notice: { kind: 'error', message: 'nope', retryable: true },
+    })
+    expect(state.notice).toBeNull()
+  })
+
+  it('still recognises the question as pending after a failed retry restores it', () => {
+    // The exact sequence behind the field report: the answer fails, `failed` pops the echo
+    // bubble back off and puts the question back in last place — with `answered: true` still on
+    // it from the `answer` dispatch. Position, not the flag, is what has to say "pending", or a
+    // retry would silently start a brand new turn instead of answering the question on screen.
+    const state = run(
+      [
+        { type: 'answer', id: 'u1', bubbleId: 'a1', text: 'saturday' },
+        {
+          type: 'failed',
+          notice: { kind: 'error', message: 'nope', retryable: true },
+          restore: 'saturday',
+        },
+      ],
+      question,
+    )
+    expect(state.bubbles).toHaveLength(1)
+    expect(state.bubbles[0]!.answered).toBe(true)
+    expect(pendingQuestion(state)?.id).toBe('a1')
   })
 })
 
