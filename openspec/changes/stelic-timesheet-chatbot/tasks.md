@@ -69,8 +69,16 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
       — Both answered. **Question 2: yes, everyone has a Zoho account** (confirmed 2026-07-25),
       so per-user login locks nobody out. Question 9: the production domain is
       `https://stelic-assistant-production.up.railway.app`.
-- [ ] 0.5 Provision the OpenRouter key (dedicated key for this app so spend is attributable),
+- [~] 0.5 Provision the OpenRouter key (dedicated key for this app so spend is attributable),
       set the account privacy defaults, and register it in the vault under `TRNSF-600`
+      — a key is in place and verified live (paid tier, usage zero at the time). The privacy
+      defaults are pinned per request rather than trusted from the account: every call sends
+      `data_collection: deny`, `zdr: true`, `require_parameters: true`, and fails closed if no
+      endpoint meets them.
+      **Two things left, both for a human at the OpenRouter console:** confirm this key is
+      dedicated to this app rather than shared (so spend is attributable), and **set a spend
+      limit** — it currently has none, and the per-user rate limit bounds a runaway loop only
+      per user. Then register it in the vault under `TRNSF-600`
 
 ## 1. Foundations
 
@@ -303,8 +311,17 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
 - [x] 3.6 Unit tests with a realistic fixture: exact name, client-only, deal name, misspelling,
       two-candidate tie, no match — fixture uses live-portal name shapes (`STE-100013 - …`,
       `Google LLC — 1080 - Google: …`)
-- [ ] 3.7 Live fallback search (CRM Accounts → Deals → projects by `crm_deal_id`; Projects by
+- [~] 3.7 Live fallback search (CRM Accounts → Deals → projects by `crm_deal_id`; Projects by
       name) when the index misses
+      — **deliberately not built.** The window it would serve turned out to be very narrow: the
+      index covers 145/145 projects and refreshes four times a day, and the matcher already
+      tolerates a transposition (`clyaco` resolves to Clayco). So a genuine miss means a
+      project created in the last few hours — and the cost is live Zoho calls on the *miss*
+      path, against a limit that answers a breach with a quarter-hour lockout, at exactly the
+      moment the user is already waiting. The current behaviour on a miss is to ask, with the
+      nearest candidates as chips, which is a good answer.
+      **Revisit if** the pilot (10.8) shows people hitting misses on real projects — that is
+      the evidence this decision is missing, and it is a week away
 
 ## 4. Extraction (LLM via OpenRouter)
 
@@ -655,9 +672,15 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
 
 ## 10. Verification
 
-- [ ] 10.1 Every scenario in `specs/auth/spec.md` passes manually
-- [ ] 10.2 Every scenario in `specs/timesheet-chat/spec.md` passes manually
-- [ ] 10.3 Every scenario in `specs/pwa-shell/spec.md` passes manually
+- [~] 10.1 Every scenario in `specs/auth/spec.md` passes manually
+- [~] 10.2 Every scenario in `specs/timesheet-chat/spec.md` passes manually
+- [~] 10.3 Every scenario in `specs/pwa-shell/spec.md` passes manually
+      — **mapped rather than ticked**, in `docs/verification.md`. 112 scenarios across the
+      three files; each of the 32 requirements is matched to the test that proves it or marked
+      as needing a person. Ticking these three without knowing which scenarios a machine
+      already covers would be a signature on somebody else's work. The great majority are
+      covered automatically; what is left is genuinely physical — a real handset, a real
+      conversation with a real model, a person trying to break the description field
 - [x] 10.4 Playwright E2E: login → single entry → confirm → verify in Zoho → undo
       — `e2e/timesheet.spec.ts`, and it runs against a **real deployment** rather than a dev
       server with a mocked Zoho. That is the whole point: everything below the API boundary is
@@ -688,4 +711,8 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
       keyed on what you actually see in the logs, and the known gaps stated plainly rather
       than left for the next person to rediscover.
       **`README.md` rewritten** too: it still claimed the repo held no application code
-- [ ] 11.3 Jira: link the repo and this spec folder to the Stelic epic
+- [x] 11.3 Jira: link the repo and this spec folder to the Stelic epic — posted to
+      [TRNSF-589](https://transformatiive.atlassian.net/browse/TRNSF-589) with links to the
+      repo, the user guide, the runbook, the design and the specs, plus the two Zoho findings
+      that affect other work in the epic (the `custom_fields` shape and the trailing slash)
+      and the `Charge_Code_Rates` rename that never took effect
