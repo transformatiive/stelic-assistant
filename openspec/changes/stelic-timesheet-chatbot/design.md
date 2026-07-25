@@ -521,9 +521,19 @@ The model never sees the project index in full and never decides the final proje
 For each `DraftEntry`, in order:
 
 1. **Date.** Parse `date_expression` in the user's timezone with an explicit resolver
-   (`today`, `yesterday`, weekday names → most recent past occurrence, `dd/mm`, `mm-dd`, ISO,
-   "last Friday"). Ambiguous or future → unresolved slot. Store as ISO `YYYY-MM-DD`, format
-   as `MM-DD-YYYY` at the API boundary.
+   (`today`, `yesterday`, weekday names → most recent past occurrence, `last <weekday>`,
+   `N days/weeks ago`, numeric `MM/DD`, ISO). Unrecognised → unresolved slot; future →
+   blocked. Store as ISO `YYYY-MM-DD`, format as `MM-DD-YYYY` at the API boundary.
+
+   **Numeric dates are read US-first (`MM/DD`), correcting this section's earlier `dd/mm`.**
+   Stelic is a US firm, the default timezone is `America/New_York`, and Zoho itself takes
+   `MM-DD-YYYY` — reading `07/08` as 8 July would silently bill the wrong day. Where the US
+   reading is impossible (a first number above 12) the day/month reading is used, so `25/07`
+   still works. A bare day/month with no year resolves to the most recent such date, so
+   `12/25` typed in July means last Christmas rather than a blocked future date.
+
+   All date arithmetic runs on civil calendar dates, never on subtraction from a UTC
+   instant, so a DST changeover cannot shift a log by a day.
 2. **Hours.** Accept decimal (`7.5`), `h:mm` (`7:30`), `7h30`. Round to the nearest 0.25.
    Reject `< 0.25` or `> 24`. Missing → unresolved slot.
 3. **Project.** Score `project_query` against `ProjectIndex` over project name, account name,
