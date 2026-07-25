@@ -143,7 +143,7 @@ commit is in flight.
 
 #### Scenario: Warnings and blocks are distinguishable
 
-- **GIVEN** one line has a daily-cap warning and another is blocked for a future date
+- **GIVEN** one line has a backdating warning and another is blocked for a future date
 - **WHEN** the card is rendered
 - **THEN** the two are visually distinct, and only the blocked line is excluded from the total
   and from the commit

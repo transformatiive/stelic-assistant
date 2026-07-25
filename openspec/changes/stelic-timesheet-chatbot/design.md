@@ -89,7 +89,7 @@ place to rotate.
 
 | Direction | Credential | Why |
 |---|---|---|
-| **Reads** — project list, tasks, portal users, CRM Accounts/Deals/PCCR, existing logs for duplicate and cap checks | The existing Stelic refresh token held in the credential vault under **`TRNSF-600`** | Already provisioned, already scoped, already trusted. Nothing to register, nothing to ask Alex for. |
+| **Reads** — project list, tasks, portal users, CRM Accounts/Deals/PCCR, existing logs for duplicate checks | The existing Stelic refresh token held in the credential vault under **`TRNSF-600`** | Already provisioned, already scoped, already trusted. Nothing to register, nothing to ask Alex for. |
 | **Writes** — creating and deleting time logs | The signed-in user's own token | A time log's owner is the person whose utilisation, approval queue and invoice line it becomes. It cannot be a service account. |
 
 **Why this split.** The service credential lets us build and refresh the per-user project
@@ -111,11 +111,22 @@ signed-in email to a portal user id — the join key the whole design rests on �
 with the users scope added.
 
 **Alternatives considered.**
-- *Proxy every Zoho call through n8n, which already holds the credentials.* Rejected for the
-  hot path: it adds a network hop and a second failure domain to a user-facing app where the
+- *Proxy every Zoho call through n8n, which already holds the credentials.* Rejected **for the
+  hot path**: it adds a network hop and a second failure domain to a user-facing app where the
   target is a sub-second reply, and it puts chat traffic through an automation runtime sized
-  for batch work. The app reads the credential from the vault at boot and calls Zoho directly.
-  n8n stays the owner of the batch and billing workflows, untouched.
+  for batch work. The app receives the credential as an environment variable (§7) and calls
+  Zoho directly. n8n stays the owner of the batch and billing workflows, untouched.
+
+  **Worth revisiting after spike 1.4.** n8n is where the usable Stelic credential actually
+  lives (`Stelic Credentials`, `81cg7LlsTQCWMht1`), it cannot be read out over n8n's API, and
+  the sibling billing app already brokers its Zoho access this way — so "no Zoho credential in
+  Railway at all" is a real option, not a hypothetical. Today it only half works: writes run on
+  each signed-in user's own token, which n8n cannot hold thirty of, so `ZOHO_CLIENT_ID` and
+  `ZOHO_CLIENT_SECRET` would still be needed here for the OAuth code exchange, and brokering
+  would remove only `ZOHO_SERVICE_REFRESH_TOKEN`. If the spike shows a service token *can* set
+  the owner, per-user OAuth disappears, every call becomes a service call, and n8n can broker
+  all of them — at which point the latency cost is the only argument left and it should be
+  weighed on measured numbers rather than assumed.
 - *A second, app-specific service token.* Rejected: two tokens to rotate for the same estate,
   and no benefit — the vault entry already has the scopes this app reads.
 
@@ -269,7 +280,7 @@ payload references a server-held draft id; the client cannot submit arbitrary en
 
 **Why.** These records are billing source data. A misheard dictation that silently books 8
 hours to the wrong client is worse than a slower flow. The tap is also the natural place to
-surface warnings (daily cap, possible duplicate, backdating).
+surface warnings (possible duplicate, backdating).
 
 **Alternatives considered.**
 - *Auto-commit when confidence is high, undo afterwards.* Rejected for v1. Undo exists, but
@@ -524,7 +535,6 @@ the affected line:
 
 | Warning | Condition |
 |---|---|
-| Daily cap | user's total for that date (existing Zoho logs + this draft) > `DAILY_HOUR_CAP` |
 | Possible duplicate | an existing log for the same user/project/task/date with ≥ 0.8 description similarity |
 | Backdating | `log_date` older than `BACKDATE_WARN_DAYS` |
 | Future date | `log_date > today` → **blocked**, not a warning |
@@ -684,7 +694,6 @@ VAULT_EPIC_KEY                  # TRNSF-600
 TOKEN_ENCRYPTION_KEY            # 32-byte key, AES-256-GCM
 SESSION_COOKIE_NAME
 SESSION_MAX_AGE_DAYS            # default 30, sliding
-DAILY_HOUR_CAP                  # open question #4
 BACKDATE_WARN_DAYS              # open question #6
 DEFAULT_BILL_STATUS             # open question #5
 DEFAULT_TIMEZONE                # America/New_York

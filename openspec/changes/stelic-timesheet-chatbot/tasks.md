@@ -146,7 +146,8 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
 - [ ] 5.5 Slot-state machine: which slot to ask next, ordered project → task → date → hours →
       description, entry by entry
 - [ ] 5.6 Draft persistence, expiry, and re-resolution after each answer
-- [ ] 5.7 Warning engine: daily cap (existing logs + draft), duplicate similarity, backdating
+- [ ] 5.7 Warning engine: duplicate similarity, backdating. **No daily cap** — abandoned as a
+      policy (open question 4); do not sum a user's daily total to warn on it
 - [ ] 5.8 Unit tests for the full resolver against the spec scenarios
 
 ## 6. Commit pipeline

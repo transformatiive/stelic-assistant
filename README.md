@@ -84,9 +84,10 @@ against this portal. If it is no, per-user Zoho login is mandatory — the log's
 timesheet. If it is yes, the service credential can do the writes and login gets simpler.
 Do not build task group 2 before this has an answer. Record it in `design.md §5`.
 
-**Still open:** portal-membership coverage, production domain, the daily hour cap (Werner,
-TRNSF-1249), default billable status, backdating window, and whether the app must respect
-timesheet approval state. Full list with owners: `proposal.md` → *Open questions*.
+**Still open:** portal-membership coverage, default billable status, backdating window, and
+whether the app must respect timesheet approval state. Full list with owners: `proposal.md` →
+*Open questions*. Resolved: the production domain, and the daily hour cap — there is no cap
+(TRNSF-1249 abandoned).
 
 The model gateway is OpenRouter, pinned to `anthropic/claude-sonnet-5` with
 `data_collection: "deny"` and `zdr: true`. Task 4.1 must confirm ZDR endpoints are available
