@@ -8,6 +8,7 @@ import {
   type CommittableEntry,
   type EntryOutcome,
 } from './commit'
+import type { RoleStamper } from './role-stamp'
 
 /**
  * Confirming and cancelling a draft (tasks 6.5, 6.6).
@@ -55,6 +56,8 @@ export type ConfirmInput = {
   zohoUserId?: string | null
   now?: Date
   logger?: CommitLogger
+  /** Stamps `billing_role` onto each created log (task 6.12). Optional and best-effort. */
+  stampRole?: RoleStamper | undefined
 }
 
 export async function confirmDraft(
@@ -116,6 +119,7 @@ export async function confirmDraft(
       sourceMessageId,
       ownerZuid: input.zohoUserId,
       entries: ready.map(toCommittable),
+      ...(input.stampRole ? { stampRole: input.stampRole } : {}),
     },
     { now: () => now, logger: input.logger },
   )

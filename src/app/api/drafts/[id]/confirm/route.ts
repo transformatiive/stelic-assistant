@@ -1,8 +1,10 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { requireApiSession } from '@/lib/auth/guard'
-import { userProjectsClient } from '@/lib/zoho/factory'
+import { loadConfig } from '@/lib/config'
+import { serviceCrmClient, userProjectsClient } from '@/lib/zoho/factory'
 import { confirmDraft, type ConfirmRefusal } from '@/lib/commit/confirm'
+import { createRoleStamper } from '@/lib/commit/role-stamp'
 
 /**
  * `POST /api/drafts/{id}/confirm` — write the draft into Zoho (task 6.5).
@@ -44,11 +46,25 @@ export async function POST(
   if (!session.ok) return session.response
 
   const { id } = await context.params
+  const config = loadConfig()
+  const projects = userProjectsClient(session.user.id)
 
-  const result = await confirmDraft(prisma, userProjectsClient(session.user.id), {
+  // Reads run on the service credential and the write on the person's own — the same split
+  // as everywhere else (design §2). The role is metadata for the invoice pipeline; the log
+  // itself has to belong to the person.
+  const stampRole = createRoleStamper({
+    db: prisma,
+    crm: serviceCrmClient(prisma),
+    projects,
+    user: session.user,
+    field: config.BILLING_ROLE_FIELD,
+  })
+
+  const result = await confirmDraft(prisma, projects, {
     userId: session.user.id,
     draftId: id,
     zohoUserId: session.user.zohoUserId,
+    stampRole,
     logger: {
       info: (event, fields) => console.info(JSON.stringify({ event, ...fields })),
       warn: (event, fields) => console.warn(JSON.stringify({ event, ...fields })),

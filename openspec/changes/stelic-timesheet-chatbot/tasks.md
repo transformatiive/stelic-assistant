@@ -172,7 +172,15 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
       An unreadable profile fails closed rather than inventing an address. AUTH-3 in the spec
       has been rewritten to match: the email → portal-user lookup it originally specified is
       impossible (0.2) and no longer needed
-- [ ] 2.5 Resolve and store the CRM user id by email; tolerate absence with a flag
+- [x] 2.5 Resolve and store the CRM user id by email; tolerate absence with a flag
+      — **by zuid, not by email.** The sign-in account and the CRM record need not share a
+      domain, so an email match would silently find nobody, and silently is the problem. The
+      zuid is the one id that crosses Projects and CRM. Cached on the `User` row, since it
+      never changes and the lookup returns the whole company. Absence is tolerated and
+      logged: somebody can have a Projects account and no CRM record, and the consequence is
+      a blank billing role rather than a failure.
+      Worth noting the contrast: `GET crm/v8/users` works, while Zoho **Projects**' own
+      `users/` endpoint answers `403 Invalid OAuth scope` for this credential
       — **not started.** `User.crm_user_id` is nullable and stays null through sign-in, which
       is what AUTH-4 requires of the *absence* case, but nothing resolves it yet. Needs the
       CRM read client from task group 3
@@ -478,12 +486,22 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
       as "you logged nothing"; and a tasklog carries no `log_date`, so **the day comes from
       the enclosing group**, which for a backdated entry is a different day from
       `created_date`. Full contract in `design.md` §5
-- [ ] 6.12 Write `billing_role` after creating a log. Spike 1.4(b) proved
+- [~] 6.12 Write `billing_role` after creating a log. Spike 1.4(b) proved
       `stampRoleOnTimelog` does not fire for API-created logs, so a log this app creates is
-      **not** indistinguishable from a UI one until the app stamps the field itself. Derive
-      the value the same way the workflow does (TRNSF-914) and set it on the log's custom
-      field. Without this the invoice pipeline sees an unroled log — check with the pipeline
-      owner whether that breaks pricing or merely degrades reporting
+      **not** indistinguishable from a UI one until the app stamps the field itself
+      — **the derivation described in TRNSF-914 does not exist.** There is no "CRM Resource
+      Subform": the live Deals module has no subform field at all. The role lives in
+      `Project_Charge_Code_Rates` — `Deal` × `Resource` (userlookup) × `Labor_Category` — and
+      that query is now implemented and tested. **But `Resource` is null on every row**, so
+      it resolves to nothing for every project today: those rows are rate-card entries per
+      labor category, not per-person assignments. The app leaves the field blank, which is
+      what TRNSF-914's own acceptance criteria specify; deriving a role from the deal's rate
+      rows would put a wrong labor category on an invoice, and a wrong role is worse than a
+      missing one because nobody looks twice at it.
+      **Two things are needed to finish it**, both outside this repo: someone has to populate
+      `Resource` on the PCCR rows, and `BILLING_ROLE_FIELD` has to be set to the Zoho column
+      name of the read-only `Billing Role` field on the Time Logs layout (the manual step in
+      TRNSF-914). The write path is built and skips itself until then
 - [~] 6.10 Undo guard against already-billed logs: refuse undo when the log's date falls in a
       period the invoice pipeline has already billed, so deleting it cannot orphan a pointer
       in the billing app's `invoiced_logs` ledger (`design.md §2`). Determine the boundary

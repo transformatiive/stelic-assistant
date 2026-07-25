@@ -352,5 +352,35 @@ function readDayGroups(body: unknown): DayLogs[] {
   return out
 }
 
+/**
+ * Stamp a value onto a created log's custom field (task 6.12).
+ *
+ * The **parameter name is configuration, not a guess.** Zoho Projects addresses a custom
+ * field on a write by its internal column name (`UDF_CHAR1` and friends), which is not
+ * derivable from the label and differs per portal layout. This app already learned what
+ * guessing a Zoho field shape costs: the index silently lost the client name from all 145
+ * projects for exactly that reason.
+ *
+ * So the caller passes the name, it comes from `BILLING_ROLE_FIELD`, and when that is unset
+ * nothing is stamped at all — an unroled log is a reporting gap, whereas a value written to
+ * the wrong field is corruption in someone else's data.
+ */
+export async function stampCustomField(
+  client: ZohoClient,
+  input: {
+    projectId: string
+    taskId: string
+    logId: string
+    /** The Zoho column name for the field, e.g. `UDF_CHAR1`. */
+    field: string
+    value: string
+  },
+): Promise<void> {
+  await client.requestText(
+    `projects/${input.projectId}/tasks/${input.taskId}/logs/${input.logId}/`,
+    { method: 'POST', form: { [input.field]: input.value } },
+  )
+}
+
 /** Exported for the tests, which assert the envelope handling directly. */
 export const _internal = { extractLogs, readDayGroups }

@@ -80,6 +80,13 @@ export type CommitInput = {
   /** The person's Zoho `zuid`, when known — see `createTimeLog`. */
   ownerZuid?: string | null
   entries: readonly CommittableEntry[]
+  /**
+   * Stamps the billing role onto a created log (task 6.12).
+   *
+   * Optional and best-effort: a log with no role is a reporting gap, and refusing to log
+   * someone's hours because a custom field could not be written would be a far worse trade.
+   */
+  stampRole?: (entry: CommittableEntry, zohoLogId: string) => Promise<void>
 }
 
 export interface CommitLogger {
@@ -154,6 +161,18 @@ export async function commitEntries(
           commitLogId,
           projectId: entry.projectId,
         })
+      } else if (input.stampRole) {
+        // After the row says `success`, and swallowing its own failure. The hours are in
+        // Zoho either way; the role is metadata for the invoice pipeline's benefit, and
+        // nothing about it is worth turning a logged day into a failed one.
+        try {
+          await input.stampRole(entry, result.log.id)
+        } catch (error) {
+          logger.warn('commit.role_stamp_failed', {
+            commitLogId,
+            error: error instanceof Error ? error.name : 'unknown',
+          })
+        }
       }
 
       outcomes.push({

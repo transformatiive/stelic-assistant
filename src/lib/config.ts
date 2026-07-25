@@ -93,6 +93,17 @@ const configSchema = z.object({
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/, 'must be an ISO date, YYYY-MM-DD')
     .optional(),
+
+  /**
+   * The Zoho column name of the read-only `Billing Role` field on the Time Logs layout
+   * (task 6.12, TRNSF-914) — e.g. `UDF_CHAR1`.
+   *
+   * Configuration rather than a constant because Zoho addresses a custom field on a write by
+   * an internal column name that is not derivable from its label and differs per portal.
+   * Unset means no stamp is attempted: an unroled log is a reporting gap, while a value
+   * written to the wrong field is corruption in someone else's data.
+   */
+  BILLING_ROLE_FIELD: nonEmpty.optional(),
 })
 
 export type Config = z.infer<typeof configSchema>

@@ -743,6 +743,44 @@ slash and the same parameters, and answers `204` when that project has nothing i
 > `billing_role` itself after creation; raised as task 6.12. (c) `DELETE` removes a log
 > cleanly, confirmed by re-reading the task to zero logs.
 
+**Where the billing role actually lives (task 6.12 — verified 2026-07-25).**
+
+**Not** in a "CRM Resource Subform." TRNSF-914 describes one; the live Deals module has no
+subform field at all (`settings/fields?module=Deals&type=all` matches nothing on
+`data_type: subform`, and the deal record has no array-of-object fields). Building against
+that description would have produced a lookup that never resolved.
+
+It lives in **`Project_Charge_Code_Rates`**, one row per role per deal:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `Deal` | lookup | the project's CRM deal |
+| `Resource` | **userlookup** | the person |
+| `Labor_Category` | text | the role label, e.g. `Project Controls Analyst V` |
+
+```
+GET crm/v8/Project_Charge_Code_Rates/search
+    ?criteria=((Deal:equals:{dealId})and(Resource:equals:{crmUserId}))
+```
+
+A plain list of the module answers `400 REQUIRED_PARAM_MISSING (fields)`; the search endpoint
+does not need it. ✅ `200` for a deal-only query (18 rows on the probed deal).
+
+**`Resource` is null on every row today**, so the (deal, person) query answers `204`. The
+rows are rate-card entries per labor category, not per-person assignments — nobody has been
+assigned a role yet. That is the empty case TRNSF-914 specifies ("field left blank"), so the
+app stamps nothing rather than deriving a role from the deal's rate rows: a wrong labor
+category on an invoice is worse than a missing one, because nobody looks twice at it.
+
+**CRM users are readable** (`GET crm/v8/users?type=ActiveUsers` → `200`, 16 active users),
+which is what resolves task 2.5. Matching is on **zuid**, not email — the sign-in account and
+the CRM record need not share a domain. Note the contrast with Zoho Projects, whose
+`users/` endpoint answers `403 Invalid OAuth scope` for this credential.
+
+**Aside, worth someone's attention:** the live CRM still has `Charge_Code_Rates`. TRNSF-864
+(rename to `Resource_Rates`, marked Done) did not take effect on this portal — the module
+list is `Charge_Code_Rates`, `Rate_Sheets`, `Project_Charge_Code_Rates`, `Wrap_Rates`.
+
 **On the v3 bulk endpoint.** The active production workflow `Stelic Timelog Bulk Loader`
 posts to a newer API version:
 
@@ -869,6 +907,7 @@ BACKDATE_WARN_DAYS              # open question #6
 DEFAULT_BILL_STATUS             # open question #5
 DEFAULT_TIMEZONE                # what a new user row starts with; the browser reports the real one
 BILLING_LOCKED_THROUGH          # optional ISO date; undo refuses on or before it (task 6.10)
+BILLING_ROLE_FIELD              # optional Zoho column name for Billing Role on Time Logs (task 6.12)
 ```
 
 **The vault is the source, the environment is the interface.** Credentials are resolved from
