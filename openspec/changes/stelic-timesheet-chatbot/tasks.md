@@ -87,20 +87,33 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
 
 ## 2. Authentication and session
 
-- [ ] 2.1 `/api/auth/login` — build the Zoho authorize URL with state and PKCE
+- [~] 2.1 `/api/auth/login` — build the Zoho authorize URL with state and PKCE
+      — builder and PKCE done in `lib/auth/{zoho-oauth,pkce}.ts`, tested including an RFC 7636
+      known-answer vector. Scopes deliberately exclude `users.*`. Route handler still to wire
 - [ ] 2.2 `/api/auth/callback` — validate state, exchange code, fetch profile
-- [ ] 2.3 AES-256-GCM encrypt/decrypt helpers for token storage; unit tests
+- [x] 2.3 AES-256-GCM encrypt/decrypt helpers for token storage; unit tests
+      — `lib/auth/crypto.ts`. Per-value random IV, so the same token encrypts differently each
+      time and nobody can tell two users share one. Tampering with either ciphertext or auth
+      tag fails closed, and the error is deliberately opaque so a wrong key is
+      indistinguishable from a forged payload
 - [ ] 2.4 On first login: identify the user from **their own token** via
       `GET /restapi/portals/` → `login_id` (their zuid) and `login_zpuid`, and confirm the
       Stelic portal is among those returned; reject the session if it is not (auth spec:
       *Valid Zoho account without portal membership*). This replaces the email → portal-user
       lookup, which is blocked by scope and no longer needed now that login is per-user.
       Store the zuid — the `owner` parameter needs it (task 5.9)
+      — `readIdentity`/`fetchIdentity` done in `lib/auth/zoho-oauth.ts`, matching on
+      `id_string` so the precision-corrupted numeric portal id cannot cause a false negative
 - [ ] 2.5 Resolve and store the CRM user id by email; tolerate absence with a flag
-- [ ] 2.6 Session issue/validate/revoke; sliding expiry; `HttpOnly` `Secure` `SameSite=Lax`
-      cookie
+- [~] 2.6 Session issue/validate/revoke; sliding expiry; `HttpOnly` `Secure` `SameSite=Lax`
+      cookie — policy done in `lib/auth/session.ts` (opaque 256-bit ids, cookie attributes,
+      sliding expiry that only writes when the deadline has drifted more than an hour, salted
+      IP hashing). Persistence lands with the route handlers
 - [ ] 2.7 Route middleware: 401 for unauthenticated API calls, redirect for pages
-- [ ] 2.8 Token refresh on demand; on refresh failure, revoke session and force re-login
+- [~] 2.8 Token refresh on demand; on refresh failure, revoke session and force re-login
+      — `refreshAccessToken` and `needsRefresh` done and tested, including `invalid_grant` on a
+      revoked consent. Tokens are treated as expiring a minute early so one cannot lapse
+      mid-flight. Session revocation on failure lands with the route handlers
 - [ ] 2.9 `/api/auth/logout` + Sign out control
 - [ ] 2.10 Login screen (single action, Stelic-appropriate styling, no field for a password)
 - [ ] 2.11 Tests for every scenario in `specs/auth/spec.md`
