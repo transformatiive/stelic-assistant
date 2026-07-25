@@ -189,9 +189,15 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
       a blank billing role rather than a failure.
       Worth noting the contrast: `GET crm/v8/users` works, while Zoho **Projects**' own
       `users/` endpoint answers `403 Invalid OAuth scope` for this credential
-      — **not started.** `User.crm_user_id` is nullable and stays null through sign-in, which
-      is what AUTH-4 requires of the *absence* case, but nothing resolves it yet. Needs the
-      CRM read client from task group 3
+      — **wired 2026-07-25.** `resolveCrmUserId` is called lazily from `GET /api/me`, which
+      the chat page mounts within seconds of every sign-in. The call is fire-and-forget so
+      it never blocks the session or the response (AUTH-4). The function already returns
+      immediately when `crmUserId` is set, so returning users pay no API cost. Tests in
+      `auth-crm-lazy-resolution.test.ts` cover: first resolution, already-cached skip, null
+      `zohoUserId` guard, network failure tolerance, and correct matching among multiple CRM
+      users. The role-stamper (`role-stamp.ts`) also calls `resolveCrmUserId` lazily at
+      commit time, so if the `/api/me` background call loses a race (e.g. an extremely fast
+      user), the stamp still resolves it before writing the log
 - [x] 2.6 Session issue/validate/revoke; sliding expiry; `HttpOnly` `Secure` `SameSite=Lax`
       cookie — policy in `lib/auth/session.ts` (opaque 256-bit ids, cookie attributes, sliding
       expiry that only writes when the deadline has drifted more than an hour, salted IP

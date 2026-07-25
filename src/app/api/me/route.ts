@@ -3,6 +3,8 @@ import { prisma } from '@/lib/db'
 import { requireApiSession } from '@/lib/auth/guard'
 import { isIndexStale } from '@/lib/index/store'
 import { route } from '@/lib/observability/route'
+import { resolveCrmUserId } from '@/lib/zoho/crm-users'
+import { serviceCrmClient } from '@/lib/zoho/factory'
 
 /**
  * `GET /api/me` — who is signed in, and is the app ready to be useful (task 7.6)?
@@ -22,6 +24,21 @@ export const dynamic = 'force-dynamic'
 export const GET = route(async function GET(request: Request): Promise<NextResponse> {
   const session = await requireApiSession(request)
   if (!session.ok) return session.response
+
+  // Task 2.5, AUTH-4: lazily resolve and cache the CRM user id the first time this person
+  // calls /api/me after signing in. The function returns immediately if already set, and
+  // absence must never block a session (AUTH-4), so this is fire-and-forget.
+  // It runs here rather than at sign-in because:
+  // - /api/me is called within seconds of every sign-in from the chat page mount
+  // - the session already carries the fields we need (no extra DB lookup)
+  // - the callback route stays simpler and the resolution does not delay the 302 redirect
+  if (!session.user.crmUserId && session.user.zohoUserId) {
+    void resolveCrmUserId(prisma, serviceCrmClient(), {
+      id: session.user.id,
+      zohoUserId: session.user.zohoUserId,
+      crmUserId: null,
+    })
+  }
 
   const [projects, stale] = await Promise.all([
     prisma.projectIndex.count(),
