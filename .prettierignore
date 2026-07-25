@@ -1,0 +1,9 @@
+.next/
+node_modules/
+src/generated/
+package-lock.json
+
+# The OpenSpec docs are hand-formatted prose and tables; reflowing them creates churn
+# and breaks the deliberate line wrapping.
+*.md
+openspec/

@@ -22,12 +22,20 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
 
 ## 1. Foundations
 
-- [ ] 1.1 In `transformatiive/stelic-assistant` (the repo already exists and holds this spec
-      under `openspec/`), scaffold Next.js 15 + TypeScript + Tailwind + shadcn/ui alongside
+- [x] 1.1 In `transformatiive/stelic-assistant` (the repo already exists and holds this spec
+      under `openspec/`), scaffold Next.js + TypeScript + Tailwind + shadcn/ui alongside
       it; strict mode, ESLint, Prettier, Vitest, CI on push
-- [ ] 1.2 Add Prisma with the schema from `design.md §3` — including `ServiceToken` (service
+      — **Next.js 16, not 15.** 16 is the current stable major with the same App Router
+      architecture this design assumes; starting a greenfield app on a superseded major
+      buys nothing. Stack as built: Next 16.2, React 19.2, Tailwind 4.3, Prisma 7.9,
+      Vitest 4.1, TypeScript 5.9, Zod 4.4. shadcn/ui is **not** installed yet — it is
+      pulled in per component in task group 8, which is where the first UI lands.
+- [x] 1.2 Add Prisma with the schema from `design.md §3` — including `ServiceToken` (service
       access-token cache, task 1.5), `RateLimit` (task 7.4) and the gateway accounting columns
       on `Message` (task 4.6); first migration
+      — 10 tables in `prisma/migrations/20260725000000_init`. Prisma 7 takes the connection
+      through `prisma.config.ts` + a driver adapter rather than a schema `url`. The migration
+      is **generated but not applied**: there is no database until task 1.3.
 - [ ] 1.3 Provision a **new** Railway project (`Stelic Assistant`) with its own app service
       and its own Postgres — not inside the existing `Stelic Financials` project, which is a
       different product (`design.md §2`). Deploy the empty app to a stable HTTPS domain; that
@@ -41,13 +49,24 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
       (c) does `DELETE` remove it cleanly?
       Record the answers in `design.md §5`, resolve the provisional decision, and raise a new
       task if `billing_role` is not stamped
-- [ ] 1.5 Typed Zoho HTTP client with two credential modes (service / user): base URL from
+- [~] 1.5 Typed Zoho HTTP client with two credential modes (service / user): base URL from
       env, auth header injection, 401-refresh-once, 429 backoff with jitter, request-id
       logging. Cache the service access token in Postgres — rapid successive refreshes on
       this tenant trigger rate limiting
-- [ ] 1.6 Config module reading and validating all env vars at boot (fail fast on missing or
+      — Transport done and unit-tested (`lib/zoho/{client,backoff,errors}.ts`): mode carried
+      by the injected `TokenSource` so a write cannot run on the service credential by
+      accident, one silent refresh on 401 then `ZohoAuthError`, full-jitter backoff honouring
+      `Retry-After`, no retry on 5xx, one request id across a retry chain.
+      **Outstanding:** the concrete `TokenSource` implementations. The service one needs the
+      `ServiceToken` cache wired to a live database (1.3); the user one needs the AES-256-GCM
+      helpers from task 2.3.
+- [x] 1.6 Config module reading and validating all env vars at boot (fail fast on missing or
       malformed). Credentials come from the environment only — the runtime never calls the
       vault (`design.md §7`)
+      — `lib/config.ts` (Zod), invoked from `instrumentation.ts` so the process dies at boot
+      rather than 500-ing on the first request that needed the variable. Errors name the
+      variable and never echo its value. `SKIP_ENV_VALIDATION=1` for build and CI, which
+      must not require a production secret.
 
 ## 2. Authentication and session
 

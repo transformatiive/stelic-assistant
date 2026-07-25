@@ -1,0 +1,236 @@
+// Schema per openspec/changes/stelic-timesheet-chatbot/design.md §3.
+//
+// This database holds only this app's operational state and audit trail. Zoho Projects is
+// the single system of record for time — see design.md §2. Nothing here is a parallel
+// record of time, and this app never writes into the billing app's database.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id                   String   @id @default(cuid())
+  zohoUserId           String?  @unique @map("zoho_user_id")
+  zohoProjectsUserId   String?  @map("zoho_projects_user_id")
+  crmUserId            String?  @map("crm_user_id")
+  email                String   @unique
+  displayName          String?  @map("display_name")
+  timezone             String   @default("America/New_York")
+  isActive             Boolean  @default(true) @map("is_active")
+  createdAt            DateTime @default(now()) @map("created_at")
+  lastSeenAt           DateTime? @map("last_seen_at")
+
+  oauthToken    OAuthToken?
+  sessions      Session[]
+  conversations Conversation[]
+  drafts        Draft[]
+  commitLogs    CommitLog[]
+  projectIndex  ProjectIndex[]
+  rateLimits    RateLimit[]
+
+  @@map("users")
+}
+
+/// One row per user. Refresh tokens are AES-256-GCM encrypted at rest and never leave
+/// the server (auth spec AUTH-2).
+model OAuthToken {
+  id                     String    @id @default(cuid())
+  userId                 String    @unique @map("user_id")
+  refreshTokenEncrypted  String    @map("refresh_token_encrypted")
+  accessTokenEncrypted   String?   @map("access_token_encrypted")
+  accessTokenExpiresAt   DateTime? @map("access_token_expires_at")
+  scope                  String?
+  updatedAt              DateTime  @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("oauth_tokens")
+}
+
+/// `id` is the cookie value: an opaque session id, never a token (auth spec AUTH-5).
+model Session {
+  id         String    @id @default(cuid())
+  userId     String    @map("user_id")
+  userAgent  String?   @map("user_agent")
+  ipHash     String?   @map("ip_hash")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  lastUsedAt DateTime  @default(now()) @map("last_used_at")
+  expiresAt  DateTime  @map("expires_at")
+  revokedAt  DateTime? @map("revoked_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+model Conversation {
+  id            String    @id @default(cuid())
+  userId        String    @map("user_id")
+  startedAt     DateTime  @default(now()) @map("started_at")
+  lastMessageAt DateTime? @map("last_message_at")
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages Message[]
+  drafts   Draft[]
+
+  @@index([userId])
+  @@map("conversations")
+}
+
+enum MessageRole {
+  user
+  assistant
+
+  @@map("message_role")
+}
+
+model Message {
+  id             String      @id @default(cuid())
+  conversationId String      @map("conversation_id")
+  role           MessageRole
+  content        String
+  uiPayload      Json?       @map("ui_payload")
+  createdAt      DateTime    @default(now()) @map("created_at")
+
+  // Gateway accounting (task 4.6). Null on assistant turns produced without a model
+  // call — the degraded guided form does not call the gateway (chat spec CHAT-13).
+  generationId     String?  @map("generation_id")
+  modelRequested   String?  @map("model_requested")
+  modelServed      String?  @map("model_served")
+  promptTokens     Int?     @map("prompt_tokens")
+  completionTokens Int?     @map("completion_tokens")
+  costUsd          Decimal? @map("cost_usd") @db.Decimal(12, 8)
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  commitLogs   CommitLog[]
+
+  @@index([conversationId, createdAt])
+  @@map("messages")
+}
+
+enum DraftStatus {
+  pending
+  confirmed
+  cancelled
+  expired
+
+  @@map("draft_status")
+}
+
+/// A pending set of entries awaiting confirmation. The client cannot submit entry data:
+/// the confirm route re-reads this row server-side (chat spec CHAT-8).
+model Draft {
+  id             String      @id @default(cuid())
+  conversationId String      @map("conversation_id")
+  userId         String      @map("user_id")
+  status         DraftStatus @default(pending)
+  entries        Json
+  createdAt      DateTime    @default(now()) @map("created_at")
+  expiresAt      DateTime    @map("expires_at")
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  commitLogs   CommitLog[]
+
+  @@index([userId, status])
+  @@map("drafts")
+}
+
+enum CommitStatus {
+  pending
+  success
+  failed
+  undone
+
+  @@map("commit_status")
+}
+
+/// Append-only, one row per attempted entry. Written `pending` before the Zoho call and
+/// updated after (design.md §4.5). `idempotencyKey` is
+/// sha256(user_id | project_id | task_id | log_date | hours | description) truncated to 32.
+model CommitLog {
+  id              String       @id @default(cuid())
+  draftId         String       @map("draft_id")
+  userId          String       @map("user_id")
+  idempotencyKey  String       @unique @map("idempotency_key")
+  projectId       String       @map("project_id")
+  projectName     String       @map("project_name")
+  taskId          String       @map("task_id")
+  taskName        String       @map("task_name")
+  logDate         DateTime     @map("log_date") @db.Date
+  hoursDecimal    Decimal      @map("hours_decimal") @db.Decimal(5, 2)
+  billable        Boolean
+  description     String
+  status          CommitStatus @default(pending)
+  zohoLogId       String?      @map("zoho_log_id")
+  zohoResponse    Json?        @map("zoho_response")
+  errorMessage    String?      @map("error_message")
+  sourceMessageId String       @map("source_message_id")
+  createdAt       DateTime     @default(now()) @map("created_at")
+  completedAt     DateTime?    @map("completed_at")
+
+  draft         Draft   @relation(fields: [draftId], references: [id], onDelete: Cascade)
+  user          User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sourceMessage Message @relation(fields: [sourceMessageId], references: [id])
+
+  @@index([userId, logDate])
+  @@index([draftId])
+  @@map("commit_logs")
+}
+
+/// Per-user matching corpus. Built with the service credential so it can be warmed
+/// before a user first signs in (design.md §2).
+model ProjectIndex {
+  id              String    @id @default(cuid())
+  userId          String    @map("user_id")
+  projectId       String    @map("project_id")
+  projectName     String    @map("project_name")
+  projectIdString String?   @map("project_id_string")
+  crmDealId       String?   @map("crm_deal_id")
+  dealName        String?   @map("deal_name")
+  accountName     String?   @map("account_name")
+  aliases         String[]  @default([])
+  /// [{ task_id, task_name, labor_category, tasklist }]
+  chargeCodes     Json      @map("charge_codes")
+  lastLoggedAt    DateTime? @map("last_logged_at")
+  refreshedAt     DateTime  @default(now()) @map("refreshed_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, projectId])
+  @@index([userId])
+  @@map("project_indexes")
+}
+
+/// Single row. The vault TRNSF-600 service credential's access token, cached because rapid
+/// successive refreshes on this tenant trigger rate limiting (task 1.5). The refresh token
+/// itself is never stored here — it arrives as an environment variable (design.md §7).
+model ServiceToken {
+  id                   String   @id @default("service")
+  accessTokenEncrypted String   @map("access_token_encrypted")
+  expiresAt            DateTime @map("expires_at")
+  refreshedAt          DateTime @updatedAt @map("refreshed_at")
+
+  @@map("service_tokens")
+}
+
+/// Fixed-window counter, per user per route (task 7.4; chat spec CHAT-14).
+model RateLimit {
+  id              String   @id @default(cuid())
+  userId          String   @map("user_id")
+  bucket          String
+  windowStartedAt DateTime @map("window_started_at")
+  count           Int      @default(0)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, bucket, windowStartedAt])
+  @@map("rate_limits")
+}
