@@ -347,6 +347,9 @@ export class FakeDb {
 
     findMany: async () => this.projectIndexes,
 
+    findUnique: async ({ where }: { where: { projectId: string } }) =>
+      this.projectIndexes.find((r) => r.projectId === where.projectId) ?? null,
+
     findFirst: async () =>
       [...this.projectIndexes].sort(
         (a, b) => b.refreshedAt.getTime() - a.refreshedAt.getTime(),
