@@ -7,7 +7,7 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
 
 ## 0. Pre-flight (blocking — do before writing code)
 
-- [~] 0.1 Pull the Stelic credential. **The vault returns metadata and token *hints* only**
+- [x] 0.1 Pull the Stelic credential. **The vault returns metadata and token *hints* only**
       (`refresh_token_hint`, no client id or secret) — confirmed portal `911636649`, domain
       `https://www.zohoapis.com`, Books org `911636705`, scopes, and deploy capabilities.
       The n8n credential `Stelic Credentials` (`81cg7LlsTQCWMht1`, `oAuth2Api`) is **not** the
@@ -25,14 +25,18 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
       Depends on 0.3: the redirect URI must be registered before the authorize step returns
       a code. Whoever signs in during that step is the identity the reads run as, so use an
       account with portal-wide visibility.
-      **Remaining:** run it, then set the four variables on the Railway service
+      **Done 2026-07-25.** A dedicated client was registered (0.3), the refresh token minted
+      against it, and all four variables set on the Railway service. The OpenRouter key was
+      verified live against `GET /api/v1/key` — valid, paid tier, usage zero. It carries **no
+      spend limit**, which is worth setting in the OpenRouter console: a runaway loop should
+      cost a small invoice, not a large one.
 - [x] 0.2 Verify the service token can call `GET /portal/911636649/users/` — **verified
       2026-07-25: it cannot.** `403 {"code":6403,"message":"Invalid OAuth scope."}`, and
       `GET /projects/{id}/users/` fails identically, so there is no project-scoped workaround.
       `portals.ALL` does not cover it. **Blocking follow-up: re-consent the token with
       `ZohoProjects.users.ALL` added and update the vault entry** — task group 2 cannot map an
       email to a portal user without it
-- [~] 0.3 **Superseded 2026-07-25: register a dedicated OAuth client after all.** This task
+- [x] 0.3 **Superseded 2026-07-25: register a dedicated OAuth client after all.** This task
       originally said to add a redirect URI to the *existing* Stelic client and register
       nothing new. That reading was wrong about which credential n8n actually holds: n8n uses
       its own generic OAuth2 credential pointed at its own callback, so there is no shared
@@ -46,7 +50,7 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
       `https://stelic-assistant-production.up.railway.app`, redirect URI
       `https://stelic-assistant-production.up.railway.app/api/auth/callback` — which must match
       `ZOHO_REDIRECT_URI` character for character, or Zoho answers `redirect_uri_mismatch`.
-      **Remaining:** create it, then feed its id and secret to 0.1
+      Created 2026-07-25 as `Stelic Assistant`, and proven end to end by a real sign-in.
 - [ ] 0.4 Confirm open questions 2 and 9 in `proposal.md` (portal membership coverage,
       production domain)
 - [ ] 0.5 Provision the OpenRouter key (dedicated key for this app so spend is attributable),
@@ -68,7 +72,7 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
       — 10 tables in `prisma/migrations/20260725000000_init`. Prisma 7 takes the connection
       through `prisma.config.ts` + a driver adapter rather than a schema `url`. The migration
       is **generated but not applied**: there is no database until task 1.3.
-- [~] 1.3 Provision a **new** Railway project (`Stelic Assistant`) with its own app service
+- [x] 1.3 Provision a **new** Railway project (`Stelic Assistant`) with its own app service
       and its own Postgres — not inside the existing `Stelic Financials` project, which is a
       different product (`design.md §2`).
       — Done: project `861f18e1-a732-4f78-a084-312ba41999f1`, Postgres service, app service
@@ -76,9 +80,16 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
       (open question 9 resolved — a generated Railway domain, swappable for a custom one only
       before users install the PWA). Non-secret env vars set, `DATABASE_URL` referencing the
       Postgres service.
-      **Remaining:** the credentials from 0.1/0.3/0.5, then a first green deploy — the app
-      fails fast at boot without them, by design (task 1.6). Switch the service's branch from
-      the feature branch to `main` when this PR merges
+      **Done 2026-07-25.** The Postgres service first created via MCP was a bare image with
+      no volume and no variables, so it crash-looped on `Railway volume not mounted to the
+      correct path` and never produced a `DATABASE_URL` — the app's reference resolved to an
+      empty string. Replaced with the official Postgres template (volume at
+      `/var/lib/postgresql/data`, full credential set). Railway resolves variable references
+      by service id rather than display name, so the template's temporary name was harmless.
+      `npx prisma migrate deploy` runs as the service's **pre-deploy command**: a failed
+      migration then aborts the deploy and leaves the previous version serving, instead of
+      starting an app against the wrong schema, and it runs once per deploy rather than once
+      per replica. `20260725000000_init` applied cleanly; the service tracks `main`.
 - [x] 1.4 **DECISIVE SPIKE — done 2026-07-25**, run as n8n workflows on the `Stelic
       Credentials` credential against `Transformatiive — TEST Deal 30 - disregard`. Four
       15-minute `Non Billable` logs created, all four deleted, task verified back to zero.
@@ -179,15 +190,30 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
       — `app/login/page.tsx`. A plain `<a>`, so it works before any JavaScript loads. The
       callback redirects here with an error *code*, not a sentence: the page owns the wording,
       and a message in a query string is a message an attacker can choose
-- [~] 2.11 Tests for every scenario in `specs/auth/spec.md`
+- [x] 2.11 Tests for every scenario in `specs/auth/spec.md`
       — 210 tests green. Covered: state mismatch, replayed code, consent refused, non-member
       (with the email logged), unreadable identity, missing email, missing refresh token,
       return-after-a-week sliding, expired/revoked/forged/unknown session, per-device sign
       out, grant retained while another device is live, tokens-at-rest ciphertext, silent
       refresh, revoked consent, open-redirect attempts on `returnTo`.
-      **Not yet covered:** *No password is ever handled by the app* and *Nothing leaks to the
-      client* — both are assertions about the built bundle and belong with the UI in task
-      group 8, where there is a rendered app to assert against
+      **The two bundle scenarios are now covered too, against the deployed app** rather than a
+      unit test — they could not be before, because there was nothing running to inspect.
+      *No password is ever handled by the app*: `/login` serves no `type="password"` anywhere.
+      *Nothing leaks to the client*: 627 KB of served JavaScript plus the HTML contain zero
+      occurrences of the client secret, the OpenRouter key, or the names
+      `ZOHO_CLIENT_SECRET`, `ZOHO_SERVICE_REFRESH_TOKEN`, `TOKEN_ENCRYPTION_KEY`,
+      `DATABASE_URL`.
+      **A live smoke test also caught a bug no unit test could**: the callback built its
+      redirects from `new URL(request.url).origin`, which behind Railway's proxy is
+      `localhost:8080` — so a successful sign-in would have redirected the user to localhost
+      with their session cookie set. Redirects now use the origin of `ZOHO_REDIRECT_URI`.
+      There is no proxy in a unit test, which is exactly why this needed a deployed app.
+
+> **Sign-in works end to end, verified 2026-07-25** against
+> `https://stelic-assistant-production.up.railway.app`: Zoho login → PKCE code exchange →
+> portal membership from the user's own token → profile → `User` row → encrypted tokens →
+> session cookie → the signed-in shell, showing the display name from the Zoho profile.
+> Task group 2 is closed.
 
 ## 3. Project index
 
