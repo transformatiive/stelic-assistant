@@ -127,6 +127,20 @@ export type MessageRow = {
   role: string
   content: string
   createdAt: Date
+  uiPayload?: unknown
+  generationId?: string | null
+  modelRequested?: string | null
+  modelServed?: string | null
+  promptTokens?: number | null
+  completionTokens?: number | null
+  costUsd?: string | null
+}
+
+export type ConversationRow = {
+  id: string
+  userId: string
+  startedAt: Date
+  lastMessageAt: Date | null
 }
 
 export class FakeDb {
@@ -139,6 +153,7 @@ export class FakeDb {
   drafts: DraftRow[] = []
   messages: MessageRow[] = []
   rateLimits: RateLimitRow[] = []
+  conversations: ConversationRow[] = []
   private nextId = 1
 
   seedUser(overrides: Partial<UserRow> = {}): UserRow {
@@ -400,6 +415,24 @@ export class FakeDb {
     findFirst: async ({ where }: { where: { id: string; userId: string } }) =>
       this.commitLogs.find((r) => r.id === where.id && r.userId === where.userId) ?? null,
 
+    findMany: async ({
+      where,
+      take,
+    }: {
+      where: { userId: string; status: string; completedAt?: { gte: Date } }
+      take?: number
+    }) =>
+      this.commitLogs
+        .filter(
+          (r) =>
+            r.userId === where.userId &&
+            r.status === where.status &&
+            (where.completedAt === undefined ||
+              (r.completedAt != null && r.completedAt >= where.completedAt.gte)),
+        )
+        .sort((a, b) => (b.completedAt?.getTime() ?? 0) - (a.completedAt?.getTime() ?? 0))
+        .slice(0, take ?? undefined),
+
     findUnique: async ({ where }: { where: { idempotencyKey?: string; id?: string } }) =>
       this.commitLogs.find(
         (r) =>
@@ -449,6 +482,11 @@ export class FakeDb {
   }
 
   readonly draft = {
+    create: async ({ data }: { data: Partial<DraftRow> & { userId: string } }) => {
+      const row = this.seedDraft(data)
+      return { id: row.id }
+    },
+
     findFirst: async ({
       where,
     }: {
@@ -515,7 +553,58 @@ export class FakeDb {
     },
   }
 
+  readonly conversation = {
+    findFirst: async ({
+      where,
+    }: {
+      where: { userId: string; lastMessageAt: { gte: Date } }
+    }) =>
+      [...this.conversations]
+        .filter(
+          (c) =>
+            c.userId === where.userId &&
+            c.lastMessageAt !== null &&
+            c.lastMessageAt >= where.lastMessageAt.gte,
+        )
+        .sort(
+          (a, b) => (b.lastMessageAt!.getTime() ?? 0) - (a.lastMessageAt!.getTime() ?? 0),
+        )[0] ?? null,
+
+    create: async ({ data }: { data: { userId: string; startedAt: Date } }) => {
+      const row: ConversationRow = {
+        id: `conv_${this.nextId++}`,
+        lastMessageAt: null,
+        ...data,
+      }
+      this.conversations.push(row)
+      return { id: row.id }
+    },
+
+    update: async ({
+      where,
+      data,
+    }: {
+      where: { id: string }
+      data: Partial<ConversationRow>
+    }) => {
+      const row = this.conversations.find((c) => c.id === where.id)!
+      Object.assign(row, data)
+      return row
+    },
+  }
+
   readonly message = {
+    create: async ({ data }: { data: Partial<MessageRow> }) => {
+      const row = { id: `msg_${this.nextId++}`, ...data } as MessageRow
+      this.messages.push(row)
+      return { id: row.id }
+    },
+
+    findMany: async ({ where }: { where: { conversationId: string } }) =>
+      this.messages
+        .filter((m) => m.conversationId === where.conversationId)
+        .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime()),
+
     findFirst: async ({
       where,
     }: {

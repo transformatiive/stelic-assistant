@@ -499,10 +499,22 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
 
 ## 7. Chat API
 
-- [ ] 7.1 `/api/chat` orchestration: persist message → extract → resolve → respond with
-      `{ reply, ui }`
-- [ ] 7.2 `/api/chat/action` for chip taps: apply typed slot value, no LLM round trip
-- [ ] 7.3 Stale-action guard (pwa-shell spec: *Stale options*)
+- [x] 7.1 `/api/chat` orchestration: persist message → extract → resolve → respond with
+      `{ reply, ui }`. The order is deliberate: the scope check first (an out-of-scope
+      question should cost nothing), then the user's message persisted **before** the model
+      call, so a degraded turn does not lose what they typed. The `ui` payload is the server's
+      decision — the browser never sees the draft's internals, and a chip's value is only ever
+      something the server put there
+- [x] 7.2 `/api/chat/action` for chip taps: apply typed slot value, no LLM round trip — which
+      is also what keeps chip taps working when the gateway is down, the whole point of the
+      guided form. Its own looser quota, since a person working a guided form taps far more
+      often than they type and spending the chat budget on taps would lock them out of the
+      fallback path
+- [x] 7.3 Stale-action guard (pwa-shell spec: *Stale options*) — refuses a chip whose slot is
+      already answered, whose draft was cancelled or has expired, or that belongs to someone
+      else, and **re-states the current question** rather than leaving a dead end. Returns
+      `200`: the user tapped a real button, so the answer is conversational, not an error the
+      client has to invent wording for
 - [x] 7.4 Per-user rate limiting; 30 chat requests/minute — a fixed window, one row and one
       atomic increment, checked **before** the model call. The thing being protected is the
       model spend, not the server: counting afterwards would mean a user at the limit still
