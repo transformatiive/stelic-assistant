@@ -5,8 +5,16 @@ import type { ZohoClient } from './client'
  * The billing role for a person on a project (task 6.12, TRNSF-914).
  *
  * Spike 1.4(b) proved `stampRoleOnTimelog` does not fire for API-created logs — a log this
- * app writes comes back with `custom_fields: []` — so the app has to resolve and stamp the
- * role itself, or the invoice pipeline sees an unroled log.
+ * app writes comes back with `custom_fields: []`.
+ *
+ * **This is cosmetic, and it is worth being clear about that.** TRNSF-914: *"The stamped role
+ * is for display/review only; billing still resolves independently by (user, project) at
+ * invoice time (TRNSF-867), so the two can never silently diverge."* What has to be right on
+ * the log is the **owner**, and it is — every log is written on the person's own credential
+ * and carries an explicit `owner=<zuid>`. Role and rate are derived downstream from that.
+ *
+ * So an unstamped log is not an unbillable log. This exists so a PM reading the Zoho grid can
+ * see the role without cross-referencing, and nothing more.
  *
  * ## Where the role actually lives, verified 2026-07-25
  *
