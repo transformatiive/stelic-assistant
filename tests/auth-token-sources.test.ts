@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { encrypt } from '@/lib/auth/crypto'
+import { decrypt, encrypt } from '@/lib/auth/crypto'
 import {
   ServiceCredentialUnavailable,
   UserReauthRequired,
@@ -274,5 +274,114 @@ describe('service token source', () => {
       now: () => NOW,
     })
     expect(source.mode).toBe('service')
+  })
+})
+
+// The failure this exists to prevent: a refresh token from a different OAuth client answers
+// `invalid_code`, no matter how carefully it was copied into an environment variable.
+describe('service credential precedence', () => {
+  it('prefers a credential connected through the app over the environment one', async () => {
+    const db = new FakeDb()
+    db.serviceTokens.push({
+      id: 'service',
+      accessTokenEncrypted: null,
+      expiresAt: null,
+      refreshTokenEncrypted: encrypt('rt-connected', KEY),
+    })
+    const fetchImpl = tokenResponse({ access_token: 'at', expires_in: 3600 })
+
+    const source = createServiceTokenSource({
+      db: db.client,
+      encryptionKey: KEY,
+      oauth: OAUTH,
+      refreshToken: 'rt-from-env',
+      now: () => NOW,
+      fetchImpl,
+    })
+    await source.getAccessToken()
+
+    const body = String(fetchImpl.mock.calls[0]![1]!.body)
+    expect(body).toContain('refresh_token=rt-connected')
+    expect(body).not.toContain('rt-from-env')
+  })
+
+  it('falls back to the environment when nothing has been connected', async () => {
+    const db = new FakeDb()
+    const fetchImpl = tokenResponse({ access_token: 'at', expires_in: 3600 })
+    const source = createServiceTokenSource({
+      db: db.client,
+      encryptionKey: KEY,
+      oauth: OAUTH,
+      refreshToken: 'rt-from-env',
+      now: () => NOW,
+      fetchImpl,
+    })
+    await source.getAccessToken()
+    expect(String(fetchImpl.mock.calls[0]![1]!.body)).toContain(
+      'refresh_token=rt-from-env',
+    )
+  })
+
+  it('falls back to the environment when the stored token cannot be decrypted', async () => {
+    // Key rotation should degrade, not break: the environment token may still work.
+    const db = new FakeDb()
+    db.serviceTokens.push({
+      id: 'service',
+      accessTokenEncrypted: null,
+      expiresAt: null,
+      refreshTokenEncrypted: encrypt('rt', Buffer.alloc(32, 99).toString('base64')),
+    })
+    const fetchImpl = tokenResponse({ access_token: 'at', expires_in: 3600 })
+    const source = createServiceTokenSource({
+      db: db.client,
+      encryptionKey: KEY,
+      oauth: OAUTH,
+      refreshToken: 'rt-from-env',
+      now: () => NOW,
+      fetchImpl,
+    })
+    await source.getAccessToken()
+    expect(String(fetchImpl.mock.calls[0]![1]!.body)).toContain(
+      'refresh_token=rt-from-env',
+    )
+  })
+
+  it('says it is not connected when there is neither, rather than calling Zoho', async () => {
+    const db = new FakeDb()
+    const fetchImpl = vi.fn<typeof fetch>()
+    const source = createServiceTokenSource({
+      db: db.client,
+      encryptionKey: KEY,
+      oauth: OAUTH,
+      now: () => NOW,
+      fetchImpl,
+    })
+    const error = await source.getAccessToken().catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(ServiceCredentialUnavailable)
+    expect((error as Error).message).toContain('not connected')
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('keeps a rotated refresh token when Zoho issues a new one', async () => {
+    const db = new FakeDb()
+    db.serviceTokens.push({
+      id: 'service',
+      accessTokenEncrypted: null,
+      expiresAt: null,
+      refreshTokenEncrypted: encrypt('rt-old', KEY),
+    })
+    const source = createServiceTokenSource({
+      db: db.client,
+      encryptionKey: KEY,
+      oauth: OAUTH,
+      now: () => NOW,
+      fetchImpl: tokenResponse({
+        access_token: 'at',
+        refresh_token: 'rt-rotated',
+        expires_in: 3600,
+      }),
+    })
+    await source.getAccessToken()
+    expect(decrypt(db.serviceTokens[0]!.refreshTokenEncrypted!, KEY)).toBe('rt-rotated')
   })
 })

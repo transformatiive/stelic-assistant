@@ -25,8 +25,21 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
       Depends on 0.3: the redirect URI must be registered before the authorize step returns
       a code. Whoever signs in during that step is the identity the reads run as, so use an
       account with portal-wide visibility.
-      **Done 2026-07-25.** A dedicated client was registered (0.3), the refresh token minted
-      against it, and all four variables set on the Railway service. The OpenRouter key was
+      **Superseded 2026-07-25, after the pasted token failed in production.** Zoho answered
+      `invalid_code` on every refresh. The reason generalises past the instance: **a refresh
+      token is bound to the OAuth client that issued it.** One produced by the old Stelic
+      client, by n8n, or by a self client cannot be refreshed with this client's id and secret,
+      however carefully it is copied. The manual mint also could not work as instructed — the
+      redirect URI is this app's own callback, which intercepted the code and reported a stale
+      link.
+      So the app now connects the credential itself: `GET /api/admin/zoho/connect` runs the
+      handshake and stores the refresh token encrypted in `ServiceToken`, next to the per-user
+      tokens the app already holds. The token is *necessarily* issued by the right client,
+      because the app is the thing asking. `ZOHO_SERVICE_REFRESH_TOKEN` becomes an optional
+      fallback and is no longer needed to boot. Design §7 is unchanged: this adds a way to
+      **obtain** a credential, not a new place to fetch one from at runtime.
+      `scripts/zoho-refresh-token.mjs` stays for a deployment that wants to inject one, but it
+      is no longer the expected path. The OpenRouter key was
       verified live against `GET /api/v1/key` — valid, paid tier, usage zero. It carries **no
       spend limit**, which is worth setting in the OpenRouter console: a runaway loop should
       cost a small invoice, not a large one.

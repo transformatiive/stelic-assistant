@@ -14,16 +14,16 @@ datasource db {
 }
 
 model User {
-  id                   String   @id @default(cuid())
-  zohoUserId           String?  @unique @map("zoho_user_id")
-  zohoProjectsUserId   String?  @map("zoho_projects_user_id")
-  crmUserId            String?  @map("crm_user_id")
-  email                String   @unique
-  displayName          String?  @map("display_name")
-  timezone             String   @default("America/New_York")
-  isActive             Boolean  @default(true) @map("is_active")
-  createdAt            DateTime @default(now()) @map("created_at")
-  lastSeenAt           DateTime? @map("last_seen_at")
+  id                 String    @id @default(cuid())
+  zohoUserId         String?   @unique @map("zoho_user_id")
+  zohoProjectsUserId String?   @map("zoho_projects_user_id")
+  crmUserId          String?   @map("crm_user_id")
+  email              String    @unique
+  displayName        String?   @map("display_name")
+  timezone           String    @default("America/New_York")
+  isActive           Boolean   @default(true) @map("is_active")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  lastSeenAt         DateTime? @map("last_seen_at")
 
   oauthToken    OAuthToken?
   sessions      Session[]
@@ -39,13 +39,13 @@ model User {
 /// One row per user. Refresh tokens are AES-256-GCM encrypted at rest and never leave
 /// the server (auth spec AUTH-2).
 model OAuthToken {
-  id                     String    @id @default(cuid())
-  userId                 String    @unique @map("user_id")
-  refreshTokenEncrypted  String    @map("refresh_token_encrypted")
-  accessTokenEncrypted   String?   @map("access_token_encrypted")
-  accessTokenExpiresAt   DateTime? @map("access_token_expires_at")
-  scope                  String?
-  updatedAt              DateTime  @updatedAt @map("updated_at")
+  id                    String    @id @default(cuid())
+  userId                String    @unique @map("user_id")
+  refreshTokenEncrypted String    @map("refresh_token_encrypted")
+  accessTokenEncrypted  String?   @map("access_token_encrypted")
+  accessTokenExpiresAt  DateTime? @map("access_token_expires_at")
+  scope                 String?
+  updatedAt             DateTime  @updatedAt @map("updated_at")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -213,10 +213,20 @@ model ProjectIndex {
 /// successive refreshes on this tenant trigger rate limiting (task 1.5). The refresh token
 /// itself is never stored here — it arrives as an environment variable (design.md §7).
 model ServiceToken {
-  id                   String   @id @default("service")
-  accessTokenEncrypted String   @map("access_token_encrypted")
-  expiresAt            DateTime @map("expires_at")
-  refreshedAt          DateTime @updatedAt @map("refreshed_at")
+  id                   String    @id @default("service")
+  accessTokenEncrypted String?   @map("access_token_encrypted")
+  expiresAt            DateTime? @map("expires_at")
+  refreshedAt          DateTime  @updatedAt @map("refreshed_at")
+
+  /// Set when an admin connects the service credential through the app, which is the only
+  /// way to obtain a refresh token bound to *this* OAuth client. Preferred over
+  /// `ZOHO_SERVICE_REFRESH_TOKEN` when present: a token in the database was demonstrably
+  /// issued by the client the app is running as, whereas one pasted into an environment
+  /// variable may have come from anywhere. Encrypted with `TOKEN_ENCRYPTION_KEY`.
+  refreshTokenEncrypted String?   @map("refresh_token_encrypted")
+  /// Who connected it, and when — so a broken credential has someone to ask.
+  connectedByUserId     String?   @map("connected_by_user_id")
+  connectedAt           DateTime? @map("connected_at")
 
   @@map("service_tokens")
 }

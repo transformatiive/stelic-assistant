@@ -27,6 +27,7 @@ function serviceTokens(config: Config, db: PrismaClient) {
     db,
     encryptionKey: config.TOKEN_ENCRYPTION_KEY,
     oauth: oauthConfig(config),
+    // Fallback only; a credential connected through the app takes precedence.
     refreshToken: config.ZOHO_SERVICE_REFRESH_TOKEN,
   })
 }

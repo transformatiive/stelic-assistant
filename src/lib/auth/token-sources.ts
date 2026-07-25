@@ -123,7 +123,11 @@ export type ServiceTokenSourceOptions = {
   db: PrismaClient
   encryptionKey: string
   oauth: ZohoOAuthConfig
-  refreshToken: string
+  /**
+   * Fallback from `ZOHO_SERVICE_REFRESH_TOKEN`. Used only when nothing has been connected
+   * through the app — see below for why the stored one wins.
+   */
+  refreshToken?: string
   now?: () => Date
   fetchImpl?: typeof fetch
 }
@@ -142,14 +146,42 @@ export function createServiceTokenSource(
 ): TokenSource {
   const now = options.now ?? (() => new Date())
 
+  /**
+   * The stored token beats the environment one, when both exist.
+   *
+   * A refresh token is bound to the OAuth client that issued it. One connected through the
+   * app was necessarily issued by the client the app runs as; one pasted into an environment
+   * variable may have come from anywhere, and if it did not, Zoho answers `invalid_code` —
+   * which is exactly how this preference came to be written.
+   */
+  async function currentRefreshToken(): Promise<string> {
+    const row = await options.db.serviceToken.findUnique({
+      where: { id: SERVICE_TOKEN_ID },
+      select: { refreshTokenEncrypted: true },
+    })
+
+    if (row?.refreshTokenEncrypted) {
+      try {
+        return decrypt(row.refreshTokenEncrypted, options.encryptionKey)
+      } catch (error) {
+        // Key rotation. Fall through to the environment rather than failing outright.
+        if (!(error instanceof DecryptionError)) throw error
+      }
+    }
+
+    if (options.refreshToken) return options.refreshToken
+    throw new ServiceCredentialUnavailable('not connected')
+  }
+
   async function refresh(): Promise<string> {
     let tokens: ZohoTokens
     try {
-      tokens = await refreshAccessToken(options.oauth, options.refreshToken, {
+      tokens = await refreshAccessToken(options.oauth, await currentRefreshToken(), {
         fetchImpl: options.fetchImpl,
         now: now(),
       })
     } catch (error) {
+      if (error instanceof ServiceCredentialUnavailable) throw error
       throw new ServiceCredentialUnavailable(
         error instanceof ZohoOAuthError ? error.code : 'unknown',
       )
@@ -162,8 +194,18 @@ export function createServiceTokenSource(
         id: SERVICE_TOKEN_ID,
         accessTokenEncrypted: encrypted,
         expiresAt: tokens.expiresAt,
+        // Zoho sometimes rotates the refresh token; keep the new one when it does.
+        ...(tokens.refreshToken
+          ? { refreshTokenEncrypted: encrypt(tokens.refreshToken, options.encryptionKey) }
+          : {}),
       },
-      update: { accessTokenEncrypted: encrypted, expiresAt: tokens.expiresAt },
+      update: {
+        accessTokenEncrypted: encrypted,
+        expiresAt: tokens.expiresAt,
+        ...(tokens.refreshToken
+          ? { refreshTokenEncrypted: encrypt(tokens.refreshToken, options.encryptionKey) }
+          : {}),
+      },
     })
 
     return tokens.accessToken
@@ -176,7 +218,7 @@ export function createServiceTokenSource(
       const row = await options.db.serviceToken.findUnique({
         where: { id: SERVICE_TOKEN_ID },
       })
-      if (row && !needsRefresh(row.expiresAt, now())) {
+      if (row?.accessTokenEncrypted && !needsRefresh(row.expiresAt, now())) {
         try {
           return decrypt(row.accessTokenEncrypted, options.encryptionKey)
         } catch (error) {

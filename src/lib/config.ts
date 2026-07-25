@@ -49,8 +49,13 @@ const configSchema = z.object({
   ZOHO_PROJECTS_API_DOMAIN: httpsUrl.default('https://projectsapi.zoho.com'),
   ZOHO_PORTAL_ID: nonEmpty,
 
-  /** The vault TRNSF-600 refresh token. Reads only — writes use the user's own token. */
-  ZOHO_SERVICE_REFRESH_TOKEN: nonEmpty,
+  /**
+   * Optional fallback for the service credential (reads only — writes use the user's own
+   * token). No longer required to boot: an admin can connect the credential through the app,
+   * which is the only way to guarantee the token was issued by *this* OAuth client. A token
+   * from any other client fails with Zoho's `invalid_code`, which is what happened here.
+   */
+  ZOHO_SERVICE_REFRESH_TOKEN: nonEmpty.optional(),
 
   // AES-256-GCM key for token storage: 32 bytes, base64 or hex
   TOKEN_ENCRYPTION_KEY: nonEmpty.refine((v) => decodeKeyLength(v) === 32, {
