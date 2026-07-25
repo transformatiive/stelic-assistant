@@ -173,10 +173,29 @@ sentence on top.
 4. **Audit requirements do not need tightening** the way this section previously assumed,
    because `added_by` survives.
 
-**Still to decide (not blocked, but a real choice).** Per-user OAuth buys permission
-enforcement by Zoho and free offboarding; an app-managed identity buys a simpler login and
-works for staff without a Zoho seat (open question 2). Now that both are possible, this is a
-product decision rather than a technical constraint.
+**Decided (2026-07-25): per-user Zoho OAuth.** Both paths were technically open; Zoho login
+was chosen for two reasons that outweigh the simpler build:
+
+1. **One place to manage people.** Stelic adds and removes users in the Zoho One console and
+   nowhere else. An app-managed identity would mean a second user list, a second password to
+   issue, and a second thing to remember to disable when someone leaves.
+2. **Reusable competence.** Transformatiive builds Zoho-attached apps repeatedly; a working,
+   understood Zoho OAuth component is worth more than a shortcut used once.
+
+So the credential split in the decision above stands: service credential for reads, the
+signed-in user's own token for writes. The `owner` parameter proven by the spike stays in
+reserve — it is what makes an admin-side backfill or a "log on behalf of" feature possible
+later without re-architecting.
+
+**And the users-scope 403 is no longer blocking.** `GET /restapi/portals/` succeeds on an
+ordinary token and returns `login_id` — the caller's own **zuid** — at the top level, plus
+`login_zpuid` inside the portal object. A signed-in user therefore identifies themselves from
+their own token, with no portal-wide user list required. Re-consenting with
+`ZohoProjects.users.ALL` is still worth doing (it would let the index be warmed for people
+who have never signed in, per §2's rationale) but it no longer gates task group 2.
+
+> Read `login_id`, not `login_zpuid`: the latter comes back as a JSON number and is
+> precision-corrupted, `2620762000000448000` for a real value of `…448001`.
 
 ---
 
@@ -610,6 +629,21 @@ marked otherwise.
 `Number.MAX_SAFE_INTEGER`, so JSON parsing silently corrupts it — observed
 `id: 2620762000000790000` against `id_string: "2620762000000790022"`. Every project, task and
 log identifier in this app is a string taken from `id_string`.
+
+**Portal settings are readable and answer product questions.** `GET /restapi/portals/`
+returns the portal's own configuration, verified 2026-07-25:
+
+| Setting | Value | Consequence |
+|---|---|---|
+| `timesheet.default_billing_status` | `Billable` | Adopt as `DEFAULT_BILL_STATUS` — it is what Zoho already does (open question 5) |
+| `timesheet.is_timesheet_approval_enabled` | `false` | Approval is **not enabled** on this portal, so there is no approval state to respect (open question 7). It also explains why API-created logs read as `Approved` |
+| `timelog_period.log_future_time.allowed` | `false` | Zoho blocks future logs itself; our block agrees with it rather than inventing a rule |
+| `timelog_period.log_past_time.allowed` | `true` | Backdating is permitted with no configured limit — any window is ours to choose (open question 6) |
+| `time_log_restriction_details` | `24:0`/day, `168:0`/week | The technical ceiling. Our 0.25–24h per-entry bound sits inside it; the weekly figure is no limit at all |
+| `task_date_format` | `MM-dd-yyyy` | Independent confirmation that this portal is US-format, supporting the `MM/DD` reading in §4.2 |
+| `startday_of_week` | `sunday` | The week view (task 6.8) must run Sunday–Saturday, not Monday–Sunday |
+| `settings.time_zone` | `America/Los_Angeles` | **Differs from `DEFAULT_TIMEZONE` (`America/New_York`)** — see task 5.10 |
+| `working_days` | Sun–Thu | Looks like a misconfiguration rather than intent; flagged, not acted on |
 
 **Rate limiting.** Responses carry `ratelimit: 100`, `ratelimit-window: 120`,
 `ratelimit-window-unit: seconds`, `ratelimit-remaining`. The client's backoff should read

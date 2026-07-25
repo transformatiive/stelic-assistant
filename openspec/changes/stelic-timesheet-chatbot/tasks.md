@@ -90,8 +90,12 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
 - [ ] 2.1 `/api/auth/login` — build the Zoho authorize URL with state and PKCE
 - [ ] 2.2 `/api/auth/callback` — validate state, exchange code, fetch profile
 - [ ] 2.3 AES-256-GCM encrypt/decrypt helpers for token storage; unit tests
-- [ ] 2.4 On first login: resolve the Zoho Projects portal user by email using the service
-      credential; reject the session if absent (auth spec: *Valid Zoho account without portal membership*)
+- [ ] 2.4 On first login: identify the user from **their own token** via
+      `GET /restapi/portals/` → `login_id` (their zuid) and `login_zpuid`, and confirm the
+      Stelic portal is among those returned; reject the session if it is not (auth spec:
+      *Valid Zoho account without portal membership*). This replaces the email → portal-user
+      lookup, which is blocked by scope and no longer needed now that login is per-user.
+      Store the zuid — the `owner` parameter needs it (task 5.9)
 - [ ] 2.5 Resolve and store the CRM user id by email; tolerate absence with a flag
 - [ ] 2.6 Session issue/validate/revoke; sliding expiry; `HttpOnly` `Secure` `SameSite=Lax`
       cookie
@@ -166,9 +170,13 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
 - [ ] 5.6 Draft persistence, expiry, and re-resolution after each answer
 - [ ] 5.7 Warning engine: duplicate similarity, backdating. **No daily cap** — abandoned as a
       policy (open question 4); do not sum a user's daily total to warn on it
-- [ ] 5.9 Store each user's Zoho **zuid** alongside their portal user id. The `owner`
-      parameter on a time-log write takes a zuid, not a zpuid (spike 1.4), so the commit
-      pipeline needs it on the `User` row
+- [ ] 5.9 Store each user's Zoho **zuid** alongside their portal user id, from `login_id` on
+      `GET /restapi/portals/`. The `owner` parameter on a time-log write takes a zuid, not a
+      zpuid (spike 1.4), so the commit pipeline needs it on the `User` row
+- [ ] 5.10 Settle the timezone. The portal is configured `America/Los_Angeles` but
+      `DEFAULT_TIMEZONE` is `America/New_York` (open question 11). Date resolution is already
+      timezone-parameterised, so this is a configuration and per-user-preference decision, not
+      a code change — but getting it wrong shifts logs by a day either side of midnight
 - [ ] 5.8 Unit tests for the full resolver against the spec scenarios
 
 ## 6. Commit pipeline
@@ -186,7 +194,8 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
 - [ ] 6.7 Undo: `/api/entries/{id}/undo` with same-day and app-origin guards; refuse approved
       logs
 - [ ] 6.8 Week read-back: `/api/entries/week` grouped by day with total
-- [ ] 6.11 Establish a working week read-back contract. The portal-wide
+- [ ] 6.11 Establish a working week read-back contract. The week runs **Sunday–Saturday**:
+      the portal's `startday_of_week` is `sunday`. The portal-wide
       `GET /logs?users_list=…&view_type=custom_date&custom_date=…` returns
       `6891 "Given URL is wrong"` (verified, both parameter shapes). Find the correct call or
       build the week view from per-project log reads, which are verified working. 6.8 depends
