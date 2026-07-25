@@ -389,6 +389,9 @@ export class FakeDb {
       return { id: row.id }
     },
 
+    findFirst: async ({ where }: { where: { id: string; userId: string } }) =>
+      this.commitLogs.find((r) => r.id === where.id && r.userId === where.userId) ?? null,
+
     findUnique: async ({ where }: { where: { idempotencyKey?: string; id?: string } }) =>
       this.commitLogs.find(
         (r) =>

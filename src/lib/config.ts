@@ -78,6 +78,21 @@ const configSchema = z.object({
   DEFAULT_BILL_STATUS: z.enum(['Billable', 'Non Billable']).default('Billable'),
 
   DEFAULT_TIMEZONE: nonEmpty.default('America/New_York'),
+
+  /**
+   * The last date the invoice pipeline has already billed, as ISO `YYYY-MM-DD`.
+   *
+   * Undo refuses on or before it (task 6.10): deleting a log that has been invoiced would
+   * orphan a pointer in the billing app's `invoiced_logs` ledger, and this app must not read
+   * that database to find out. So the boundary is configuration.
+   *
+   * Unset means no lock, which is the honest default — a wrong guess here either blocks a
+   * legitimate undo or fails to block a damaging one.
+   */
+  BILLING_LOCKED_THROUGH: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'must be an ISO date, YYYY-MM-DD')
+    .optional(),
 })
 
 export type Config = z.infer<typeof configSchema>
