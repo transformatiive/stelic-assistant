@@ -229,72 +229,67 @@ Hours SHALL accept decimal (`7.5`), `h:mm` (`7:30`) and `7h30` forms, round to t
 
 ---
 
-### Requirement: CHAT-7 — Unresolved slots are asked one at a time, most blocking first
+### Requirement: CHAT-7 — The model runs the conversation, within fixed bounds
 
-Clarifying questions SHALL be asked entry by entry, in the order project → task → date →
-hours → description, one question per turn. Chips SHALL be offered wherever a finite candidate
-set exists, always with a free-text fallback. Answering a chip SHALL apply a typed slot value
-without a model round trip, and re-run resolution.
+The conversation SHALL be driven by the model, not by a fixed question order. It SHALL read
+the whole conversation, decide what is genuinely missing, and ask in its own words — offering
+tappable suggested replies wherever a finite set exists. A suggested reply SHALL send its
+literal text as an ordinary message, so tapping and typing follow one code path.
 
-A typed reply, while a draft is waiting on an answer, is not unambiguous the way a chip is: it
-may answer the pending question, correct a value already resolved elsewhere in the same draft
-("oh i meant Turner, not Clayco", "actually make it 6 hours"), or be unrelated to the draft
-entirely. A lightweight classification call SHALL decide which, given the pending question and
-every entry already in the draft — not the full sentence-extraction model, which has the
-harder job of splitting a whole freeform message into one or more entries, and which a typed
-reply to an open question does not need. Whichever slot the classifier names, the value it
-returns SHALL be the user's own words, re-resolved through the same deterministic matcher a
-chip's value goes through — a wrong classification can produce a wrong follow-up question, but
-never a wrong Zoho entry. A classification failure, or a decision that the reply is unrelated,
-SHALL degrade to ordinary full-sentence extraction, exactly as if no draft were pending.
+The model SHALL reach real data only through tools: searching projects and listing charge
+codes. It SHALL NOT invent an identifier — a proposed entry naming a project or task the
+index did not issue SHALL be refused. Dates, hours and descriptions SHALL be resolved from
+the user's own words by the app, in the user's timezone, never by the model.
 
-#### Scenario: Ordered questioning
+A proposal that fails any of those checks SHALL be returned to the model as the specific
+problems, so it asks about them, rather than rendering a question the user cannot answer or a
+card the user must notice is broken.
 
-- **GIVEN** an entry missing project, hours and description
-- **WHEN** resolution runs
-- **THEN** the bot asks about the project first, and only about the project
+#### Scenario: An answer in any wording
 
-#### Scenario: Chip tap is typed, not re-parsed
+- **GIVEN** the bot has asked which day
+- **WHEN** the user replies "on sat jul 25th", or "saturday july 25th", or taps a suggestion
+- **THEN** it is understood as the answer, and the same question is not asked again
 
-- **WHEN** the user taps the *Clayco — MS Data Center* chip
-- **THEN** `POST /api/chat/action` applies `{ slot: "project", value: <project id> }` directly
-- **AND** no LLM call is made for that turn
+#### Scenario: Correcting something already given
 
-#### Scenario: Free-text answer to the pending question
+- **GIVEN** a project and hours are already established
+- **WHEN** the user says "oh i meant Turner, not Clayco" or "actually make it 6 hours"
+- **THEN** the correction is applied to the right value, and nothing already answered is
+  asked again
 
-- **GIVEN** a draft is waiting on an answer for the date
-- **WHEN** the user types "yesterday" instead of tapping anything
-- **THEN** it is treated as the answer to that slot for that entry, not as a new entry
+#### Scenario: Several entries in one message
 
-#### Scenario: Correcting a slot other than the one being asked about
+- **WHEN** the user describes work on two projects, or the same project across two days
+- **THEN** one card is proposed carrying an entry per project and day
 
-- **GIVEN** a draft has already resolved a project, and is now waiting on the date
-- **WHEN** the user types "oh i meant Turner, not Clayco"
-- **THEN** the project is re-resolved from "Turner", the date question is still asked, and no
-  new entry is created
+#### Scenario: Ids are never invented
 
-#### Scenario: A message unrelated to the pending draft
-
-- **GIVEN** a draft is waiting on an answer
-- **WHEN** the user's reply is about something else entirely
-- **THEN** the message is extracted as an ordinary new turn, exactly as if no draft were pending
-
-#### Scenario: The classifier is unavailable
-
-- **GIVEN** a draft is waiting on an answer
-- **WHEN** the continuation classification call fails
-- **THEN** the turn degrades to ordinary full-sentence extraction rather than failing outright
+- **WHEN** the model proposes an entry naming a project id the index did not issue
+- **THEN** the proposal is refused and the model is told to search instead
+- **AND** nothing is shown to the user as if it were a real project
 
 #### Scenario: A task that does not exist yet
 
-- **GIVEN** the bot is asking which charge code, with chips for the project's existing tasks
-- **WHEN** the user types a task that is not on the list — "i want something else like 'built
-  the app'"
-- **THEN** the typed name becomes the entry's task, marked on the confirmation card as new
-- **AND** the task is created in Zoho only when the card is confirmed, on the signed-in
-  user's own credential, reusing a same-named task if one already exists on the project
-- **AND** a typo that narrows to exactly one existing task resolves to that task instead of
-  creating a near-duplicate
+- **GIVEN** the charge codes offered do not fit
+- **WHEN** the user names a task that is not on the list
+- **THEN** it is proposed as a new task, marked as new on the card, and created in Zoho only
+  on confirm
+
+#### Scenario: A value the app cannot accept
+
+- **WHEN** the model proposes a future date, 30 hours, or a description that says nothing
+- **THEN** the app hands the problem back to the model, which asks the user about it
+
+#### Scenario: Anything that is not recording time
+
+- **WHEN** the user asks for something other than logging time
+- **THEN** the bot says plainly that it only records timesheets, and does not attempt it
+
+#### Scenario: The model is unavailable
+
+- **WHEN** the gateway fails
+- **THEN** the user is told plainly, in a sentence naming no provider, model or status code
 
 ---
 

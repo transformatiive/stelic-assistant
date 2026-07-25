@@ -37,11 +37,6 @@ const configSchema = z.object({
   OPENROUTER_API_KEY: nonEmpty,
   OPENROUTER_MODEL: nonEmpty.default('anthropic/claude-sonnet-5'),
   OPENROUTER_FALLBACK_MODELS: csv,
-  // The lighter model behind the continuation classifier (task 7.7, CHAT-7): deciding whether
-  // a typed reply answers or corrects a draft already in progress is a short classification,
-  // not the harder job of splitting a whole sentence into entries, so it runs on a cheaper,
-  // faster model than OPENROUTER_MODEL rather than paying for the same one twice.
-  OPENROUTER_CONTINUATION_MODEL: nonEmpty.default('anthropic/claude-haiku-4.5'),
   OPENROUTER_SITE_URL: httpsUrl,
   OPENROUTER_APP_TITLE: nonEmpty.default('Stelic Assistant'),
 

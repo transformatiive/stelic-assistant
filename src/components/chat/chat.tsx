@@ -114,21 +114,6 @@ export function Chat({ today }: { today: string }) {
     [post],
   )
 
-  const tap = useCallback(
-    async (bubble: Bubble, chip: Chip) => {
-      if (bubble.ui?.kind !== 'question') return
-      dispatch({ type: 'tap', id: id(), bubbleId: bubble.id, label: chip.label })
-      const result = await post<{ reply: string; ui: ChatUi }>('/api/chat/action', {
-        draftId: bubble.ui.draftId,
-        entryId: bubble.ui.entryId,
-        slot: bubble.ui.slot,
-        value: chip.value,
-      })
-      if (result) dispatch({ type: 'reply', id: id(), text: result.reply, ui: result.ui })
-    },
-    [post],
-  )
-
   const confirm = useCallback(
     async (bubble: Bubble, draftId: string) => {
       dispatch({ type: 'settle', bubbleId: bubble.id })
@@ -177,12 +162,18 @@ export function Chat({ today }: { today: string }) {
     if (!ui) return null
 
     if (ui.kind === 'question') {
+      // A suggested reply is a shortcut for typing it, so tapping one goes down the exact
+      // same path as the composer. Typing and tapping were two code paths before, and the
+      // one that mattered less was the one that worked.
       return (
         <Chips
-          chips={ui.chips}
+          chips={ui.options.map((option) => ({ value: option, label: option }))}
           {...(bubble.answered ? { answered: true } : {})}
           disabled={state.busy}
-          onPick={(chip) => void tap(bubble, chip)}
+          onPick={(chip) => {
+            dispatch({ type: 'settle', bubbleId: bubble.id })
+            void send(chip.value)
+          }}
         />
       )
     }
