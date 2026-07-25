@@ -30,7 +30,8 @@ charge code — with a mandatory task description attached. Time to log a day: u
 seconds. No Zoho navigation, no training, no VPN, no desktop required.
 
 Success is observable as: (a) time logs created through the app are indistinguishable from
-logs created in the Zoho UI, including `billing_role` stamping; (b) median lag between work
+logs created in the Zoho UI, including `billing_role` — which spike 1.4 showed the app must
+stamp itself, since the existing automation does not fire for API writes (task 6.12); (b) median lag between work
 date and log date drops; (c) PM chasing of missing timesheets falls.
 
 ### Why now
@@ -62,7 +63,7 @@ budget-vs-actual reporting both assume complete, timely logs.
   written to Zoho.
 - **Multi-entry in one turn** — several projects, dates and durations parsed from one message
   and confirmed together.
-- **Validation** — hours bounds, duplicate detection, date sanity, daily-cap warning.
+- **Validation** — hours bounds, duplicate detection, date sanity.
 - **Undo** — delete a time log created by the app, same day.
 - **"What did I log?"** — read back the current week's entries and weekly total.
 - **Audit trail** — every committed entry recorded server-side with the originating message.
@@ -113,13 +114,14 @@ Detailed architecture, decisions and API contracts: see `design.md`.
 
 | # | Question | Owner | Needed by |
 |---|---|---|---|
-| 1 | ~~Auth model~~ — now gated on spike 1.4 rather than a decision: if Zoho refuses to create a log owned by another user, per-user OAuth is mandatory. Reads use the existing vault credential either way. | Spike 1.4 | Before task group 2 |
+| 1 | ~~Auth model~~ — **resolved: per-user Zoho OAuth.** Both were technically viable after spike 1.4; Zoho login chosen so Stelic manages people only in the Zoho One console, and because a working Zoho OAuth component is reusable across Transformatiive's Zoho work. | Nuno | Done |
 | 2 | Are all timesheet users **licensed Zoho Projects portal users** with a Zoho account on the Stelic org (not just CRM users)? Determines whether OAuth is viable for 100% of staff. | Nuno / Alex | Before task group 2 |
-| 3 | Does the vault token's scope set cover `GET /portal/{id}/users/`? The email → portal-user mapping depends on it. | Nuno (task 0.2) | Before task group 2 |
-| 4 | **Daily hour cap** value and whether it is a hard block or a soft warning (TRNSF-1249). | Werner | Before go-live |
-| 5 | Default **billable status** for chat-created logs — always `Billable` unless the user says otherwise, or inherit from the task? | Werner / Brooke | Before task group 6 |
-| 6 | **Backdating window** — how many days back may a consultant log without PM involvement? | Alex | Before go-live |
-| 7 | Does the app need to respect the **timesheet approval state** (i.e. refuse to log into a week already submitted/approved)? | Alex | Before task group 6 |
+| 3 | ~~Does the vault token's scope cover `GET /portal/{id}/users/`?~~ — **resolved: no** (`403 Invalid OAuth scope`, project-scoped endpoint too). **No longer blocking:** `GET /restapi/portals/` works on any token and returns `login_id`, the caller's own zuid, so a signed-in user self-identifies. Re-consenting with `ZohoProjects.users.ALL` is still wanted, to warm the index for people who have not yet signed in. | Nuno | Nice to have |
+| 4 | ~~Daily hour cap~~ — **resolved: there is no cap.** Abandoned as a policy (TRNSF-1249). The bot warns on nothing derived from a daily total. The per-entry 0.25–24h bound stays, as a sanity check on one entry rather than a policy limit. | Werner | Done |
+| 5 | ~~Default billable status~~ — **resolved: `Billable`.** The portal's own `timesheet.default_billing_status` is `Billable` (read 2026-07-25), so the bot matches what Zoho already does rather than introducing a second rule. Explicit user wording still wins. | Werner / Brooke | Done |
+| 6 | **Backdating window** — how many days back may a consultant log without PM involvement? Zoho permits past logging with no configured limit, so this is purely a Stelic policy choice; the app warns beyond `BACKDATE_WARN_DAYS` (default 14). | Alex | Before go-live |
+| 7 | ~~Respect timesheet approval state?~~ — **resolved: nothing to respect.** `is_timesheet_approval_enabled` is `false` on this portal (read 2026-07-25), which is also why API-created logs read as `Approved`. Revisit if approval is ever switched on (TRNSF-1248). | Alex | Done |
 | 8 | ~~OAuth client registration~~ — **resolved**: reuse the existing Stelic server-based client from vault `TRNSF-600`, adding a redirect URI. No new registration. | — | Done |
-| 9 | Production **domain** for the PWA (installability and OAuth redirect both depend on a stable HTTPS origin). | Nuno | Before task group 1 |
-| 10 | Does the **`Stelic Financials` Postgres** (repo `transformatiive/Stelic-Billing-Period`) hold time rows, and if so are they *derived from Zoho* or *authored there*? If derived, nothing to do — bot logs flow in via Zoho and `design.md §2` stands. If authored independently, the commit pipeline needs a second destination or the billing app needs a Zoho pull, and that is a design change. Settle from the repo's migrations. | Nuno | Before task group 6 |
+| 11 | **Timezone** — the portal is configured `America/Los_Angeles`; the app defaults to `America/New_York`. Which is right for date reasoning, and should it come per-user rather than one default? (task 5.10) | Nuno / Alex | Before go-live |
+| 9 | ~~Production domain~~ — **resolved**: `https://stelic-assistant-production.up.railway.app` (Railway-generated, stable). Swappable for a custom domain only before anyone installs the PWA. | Nuno | Done |
+| 10 | ~~Does the `Stelic Financials` Postgres hold time rows?~~ — **resolved: no.** Its schema was read directly (2026-07-25). `invoiced_logs` is a pointer ledger keyed by the Zoho log `id_string`; `profitability_lines` and `resource_projections` are per-run aggregates; the rest is run metadata and KPI snapshots. No table stores a time entry, so bot-created logs flow into billing via Zoho with no second destination. Evidence in `design.md §2`. | Nuno | Done |

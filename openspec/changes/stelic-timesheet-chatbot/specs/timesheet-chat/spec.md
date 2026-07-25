@@ -169,7 +169,8 @@ list).
 
 `date_expression` SHALL be resolved deterministically in the user's IANA timezone (default
 `DEFAULT_TIMEZONE`): `today`, `yesterday`, bare weekday names → the most recent past
-occurrence, `last <weekday>`, `dd/mm`, `mm-dd`, and ISO `YYYY-MM-DD`. Stored as ISO, sent to
+occurrence, `last <weekday>`, `N days/weeks ago`, numeric `MM/DD` (US-first — see
+`design.md` §4.2), and ISO `YYYY-MM-DD`. Stored as ISO, sent to
 Zoho as `MM-DD-YYYY`.
 
 #### Scenario: Bare weekday resolves backwards
@@ -297,18 +298,21 @@ draft server-side and SHALL ignore any entry data sent by the client.
 
 ### Requirement: CHAT-9 — Warnings are surfaced on the card, not enforced silently
 
-The card SHALL show per-line warnings for: daily cap exceeded (existing Zoho logs for that
-date plus this draft, against `DAILY_HOUR_CAP`), possible duplicate (existing log for the same
-user/project/task/date with ≥ 0.8 description similarity), and backdating beyond
+The card SHALL show per-line warnings for: possible duplicate (existing log for the same
+user/project/task/date with ≥ 0.8 description similarity) and backdating beyond
 `BACKDATE_WARN_DAYS`. Warnings SHALL NOT block confirmation; blocks (future date, out-of-bounds
 hours, no charge code) SHALL.
 
-#### Scenario: Daily cap
+**There is no daily hour cap.** It was abandoned as a policy (open question 4), so the bot
+SHALL NOT sum a user's total for a date, and SHALL NOT warn or block on it. The per-entry
+0.25–24h bound in CHAT-6 stays — that is a sanity check on one entry, not a daily limit.
 
-- **GIVEN** `DAILY_HOUR_CAP` is 12 and the user already has 8 hours logged for that date
-- **WHEN** they draft another 6 hours on that date
-- **THEN** the line shows "This would put you at 14 hours on 21 Jul"
-- **AND** *Confirm all* remains enabled
+#### Scenario: No daily total is enforced
+
+- **GIVEN** the user already has 10 hours logged for a date
+- **WHEN** they draft another 6 hours on that same date
+- **THEN** no daily-total warning appears on the line
+- **AND** *Confirm all* commits it like any other entry
 
 #### Scenario: Possible duplicate
 
@@ -388,11 +392,21 @@ timezone) as the commit. It SHALL refuse anything else and point the user to Zoh
 - **WHEN** an undo is attempted for it
 - **THEN** it is refused — the app only deletes what it has a `CommitLog` row for
 
-#### Scenario: Approved log
+#### Scenario: Approval status alone does not block undo
 
-- **GIVEN** a log whose timesheet has been approved
+- **GIVEN** an app-created log, which Zoho marks `approval_status: "Approved"` at creation
+  with no human approving anything (verified, spike 1.4)
+- **WHEN** the user undoes it the same day
+- **THEN** it is deleted normally
+- **AND** the undo guard SHALL NOT key off `approval_status`, because every app-created log
+  carries it and keying off it would disable undo entirely
+
+#### Scenario: Log inside an already-billed period
+
+- **GIVEN** a log whose date falls in a period the invoice pipeline has already billed
 - **WHEN** undo is attempted
-- **THEN** it is refused with an explanation
+- **THEN** it is refused with an explanation, so deleting it cannot orphan a pointer in the
+  billing app's ledger (task 6.10)
 
 ---
 

@@ -76,10 +76,11 @@ describe('loadConfig', () => {
     ])
   })
 
-  it('rejects a daily hour cap above 24', () => {
-    expect(() => loadConfig({ ...validEnv, DAILY_HOUR_CAP: '30' })).toThrowError(
-      /DAILY_HOUR_CAP/,
-    )
+  it('ignores a leftover DAILY_HOUR_CAP rather than failing boot', () => {
+    // The cap was abandoned as a policy; a stale value in the environment must
+    // neither fail validation nor reappear in the parsed config.
+    const config = loadConfig({ ...validEnv, DAILY_HOUR_CAP: '12' })
+    expect(config).not.toHaveProperty('DAILY_HOUR_CAP')
   })
 
   it('caches the parsed config', () => {

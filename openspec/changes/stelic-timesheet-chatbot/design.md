@@ -89,7 +89,7 @@ place to rotate.
 
 | Direction | Credential | Why |
 |---|---|---|
-| **Reads** — project list, tasks, portal users, CRM Accounts/Deals/PCCR, existing logs for duplicate and cap checks | The existing Stelic refresh token held in the credential vault under **`TRNSF-600`** | Already provisioned, already scoped, already trusted. Nothing to register, nothing to ask Alex for. |
+| **Reads** — project list, tasks, portal users, CRM Accounts/Deals/PCCR, existing logs for duplicate checks | The existing Stelic refresh token held in the credential vault under **`TRNSF-600`** | Already provisioned, already scoped, already trusted. Nothing to register, nothing to ask Alex for. |
 | **Writes** — creating and deleting time logs | The signed-in user's own token | A time log's owner is the person whose utilisation, approval queue and invoice line it becomes. It cannot be a service account. |
 
 **Why this split.** The service credential lets us build and refresh the per-user project
@@ -111,40 +111,91 @@ signed-in email to a portal user id — the join key the whole design rests on �
 with the users scope added.
 
 **Alternatives considered.**
-- *Proxy every Zoho call through n8n, which already holds the credentials.* Rejected for the
-  hot path: it adds a network hop and a second failure domain to a user-facing app where the
+- *Proxy every Zoho call through n8n, which already holds the credentials.* Rejected **for the
+  hot path**: it adds a network hop and a second failure domain to a user-facing app where the
   target is a sub-second reply, and it puts chat traffic through an automation runtime sized
-  for batch work. The app reads the credential from the vault at boot and calls Zoho directly.
-  n8n stays the owner of the batch and billing workflows, untouched.
+  for batch work. The app receives the credential as an environment variable (§7) and calls
+  Zoho directly. n8n stays the owner of the batch and billing workflows, untouched.
+
+  **Worth revisiting after spike 1.4.** n8n is where the usable Stelic credential actually
+  lives (`Stelic Credentials`, `81cg7LlsTQCWMht1`), it cannot be read out over n8n's API, and
+  the sibling billing app already brokers its Zoho access this way — so "no Zoho credential in
+  Railway at all" is a real option, not a hypothetical. Today it only half works: writes run on
+  each signed-in user's own token, which n8n cannot hold thirty of, so `ZOHO_CLIENT_ID` and
+  `ZOHO_CLIENT_SECRET` would still be needed here for the OAuth code exchange, and brokering
+  would remove only `ZOHO_SERVICE_REFRESH_TOKEN`. If the spike shows a service token *can* set
+  the owner, per-user OAuth disappears, every call becomes a service call, and n8n can broker
+  all of them — at which point the latency cost is the only argument left and it should be
+  weighed on measured numbers rather than assumed.
 - *A second, app-specific service token.* Rejected: two tokens to rotate for the same estate,
   and no benefit — the vault entry already has the scopes this app reads.
 
 ---
 
-### Decision (PROVISIONAL — gated on spike 1.4): who owns an API-created time log
+### Decision (RESOLVED by spike 1.4, 2026-07-25): a service token CAN own-set a time log
 
-**The question.** Can a portal-admin token create a time log owned by a different user? If
-yes, the service credential could do the writes too and per-user OAuth becomes optional. If
-no, per-user OAuth is mandatory and is not a security preference but a functional
-requirement.
+**The question was.** Can a portal-admin token create a time log owned by a different user?
 
-**Current evidence points to *no*.** The documented create-log parameters are `date`,
-`hours`, `bill_status` and `notes` — there is no owner field — and Zoho's own support
-position on logging time for other portal members has been that it is not supported by
-design. That evidence is indicative, not conclusive: it predates the current API version and
-was not tested against this portal.
+**Answer: yes.** Tested against portal `911636649` on `Transformatiive — TEST Deal 30 -
+disregard`, task *Project Execution*, with the Stelic service credential. Four 15-minute
+`Non Billable` logs were created and all four deleted; the task is verifiably back to zero
+logs.
 
-**So it gets tested before anything is built on it.** Task 1.4 runs the experiment against
-the real portal with the real vault token. The result decides the auth path:
+| Attempt | `owner` value | Result |
+|---|---|---|
+| No `owner` | — | `201` — owned by the token holder |
+| `owner` = another user's **zpuid** | `2620762000000124007` | `400` `6401` "The user assigned does not belong to this project" |
+| `owner` = token holder's own **zpuid** | `2620762000000448001` | `400` `6401` — same error, so this is an **id-format** failure, not a membership one |
+| `owner` = token holder's own **zuid** | `917530087` | `201` |
+| `owner` = Brook Bolger's **zuid** | `906043724` | **`201`, `owner_name: "Brook Bolger"`** |
+| `owner` = Mike Bograd's **zuid** | `906348684` | **`201`, `owner_name: "Mike Bograd"`** |
 
-- **Cannot set owner** → per-user OAuth as specified. Task group 2 stands as written.
-- **Can set owner** → the service credential may do the writes, and login can be simplified
-  (an app-managed identity becomes viable). Task group 2 shrinks; task group 6 gains an owner
-  parameter; §8's audit requirements get *stricter*, because Zoho's own audit trail would then
-  attribute every log to the service account and ours becomes the only record of who actually
-  said what.
+**The `owner` parameter takes a `zuid`, not a `zpuid`.** A zpuid produces the misleading
+"does not belong to this project" error even for a user who plainly does. That one detail is
+what made the prior evidence look like "not supported".
 
-Do not start task group 2 before 1.4 has an answer.
+**Zoho keeps its own attribution.** Every log carries both `owner_id`/`owner_name` (whose
+timesheet it is) and `added_by: { zpuid, name, zuid }` (who called the API), plus
+`added_via: "api"`. The concern that a service-token write would erase who actually did it is
+therefore unfounded — Zoho records both sides, and our `CommitLog` adds the originating
+sentence on top.
+
+**Consequences.**
+1. **Per-user OAuth is no longer a functional requirement.** It remains one option, but the
+   service credential can write a correctly-owned log for anybody. Task group 2 can shrink to
+   an app-managed identity, and the read/write credential split in the decision above
+   collapses to a single service credential.
+2. **Task group 6 gains an `owner` parameter**, carrying the target user's **zuid**. The
+   `User` model needs that zuid stored alongside `zoho_projects_user_id`.
+3. **The n8n-broker option becomes fully viable** — see the alternative in the decision above.
+   With no per-user tokens, every Zoho call is a service call, so nothing forces a Zoho
+   credential into this app's environment at all.
+4. **Audit requirements do not need tightening** the way this section previously assumed,
+   because `added_by` survives.
+
+**Decided (2026-07-25): per-user Zoho OAuth.** Both paths were technically open; Zoho login
+was chosen for two reasons that outweigh the simpler build:
+
+1. **One place to manage people.** Stelic adds and removes users in the Zoho One console and
+   nowhere else. An app-managed identity would mean a second user list, a second password to
+   issue, and a second thing to remember to disable when someone leaves.
+2. **Reusable competence.** Transformatiive builds Zoho-attached apps repeatedly; a working,
+   understood Zoho OAuth component is worth more than a shortcut used once.
+
+So the credential split in the decision above stands: service credential for reads, the
+signed-in user's own token for writes. The `owner` parameter proven by the spike stays in
+reserve — it is what makes an admin-side backfill or a "log on behalf of" feature possible
+later without re-architecting.
+
+**And the users-scope 403 is no longer blocking.** `GET /restapi/portals/` succeeds on an
+ordinary token and returns `login_id` — the caller's own **zuid** — at the top level, plus
+`login_zpuid` inside the portal object. A signed-in user therefore identifies themselves from
+their own token, with no portal-wide user list required. Re-consenting with
+`ZohoProjects.users.ALL` is still worth doing (it would let the index be warmed for people
+who have never signed in, per §2's rationale) but it no longer gates task group 2.
+
+> Read `login_id`, not `login_zpuid`: the latter comes back as a JSON number and is
+> precision-corrupted, `2620762000000448000` for a real value of `…448001`.
 
 ---
 
@@ -269,7 +320,7 @@ payload references a server-held draft id; the client cannot submit arbitrary en
 
 **Why.** These records are billing source data. A misheard dictation that silently books 8
 hours to the wrong client is worse than a slower flow. The tap is also the natural place to
-surface warnings (daily cap, possible duplicate, backdating).
+surface warnings (possible duplicate, backdating).
 
 **Alternatives considered.**
 - *Auto-commit when confidence is high, undo afterwards.* Rejected for v1. Undo exists, but
@@ -301,6 +352,29 @@ and no cold-start behaviour on a user-facing app that must feel instant.
 The app therefore reaches Zoho and CRM over their APIs like any other client. It has no
 database-level relationship with the billing app, and it never writes to the `invoiced_logs`
 ledger or the n8n invoice pipeline (see `project.md` → *Integration surface*).
+
+**Verified against the billing app's schema** (`transformatiive/Stelic-Billing-Period`,
+`lib/db/src/schema`, read 2026-07-25). Its database holds six tables and **not one of them
+stores a time entry**:
+
+| Table | What it holds |
+|---|---|
+| `invoiced_logs` | An idempotency ledger: Zoho time-log `id_string` → billing run + Books project + `invoiced_at`. A **pointer**, no hours, date or description. Its own comment: the source of truth for "already invoiced", because Zoho's `bill_status` cannot be set to `Billed`. |
+| `profitability_lines` | Per-person, per-run **aggregates** — hours × rates → revenue and cost. Derived output of a billing run. |
+| `resource_projections` | Monthly projected hours plus `actual_hours` (approved timesheet hours) as a capacity overlay. Aggregate. |
+| `billing_runs`, `batch_runs`, `financial_inputs` | Run metadata, guard findings, and monthly KPI snapshots. |
+
+So time is authored in exactly one place — Zoho Projects — and the billing app references
+logs by id and derives aggregates from them. A log this app creates in Zoho is therefore
+already "in the same place" as every other log, and flows into billing with no second write
+and nothing to keep in sync. Task 10.6 confirms that end to end.
+
+**Known interaction, undo vs. the ledger.** `invoiced_logs` is keyed by the Zoho log id. If
+this app's same-day undo deleted a log that a billing run had already swept up, the ledger
+would keep a pointer to a log that no longer exists. The window is small — undo is same-day
+and billing runs per period — and this app must not read the billing database to check. The
+guard belongs on the Zoho side: refuse undo for a log whose date falls in a period already
+billed. Raised as task 6.10.
 
 **Separate database does not mean separate time records.** Zoho Projects is the single system
 of record for time. A bot-created log is written to portal `911636649` exactly as the Zoho UI
@@ -466,9 +540,19 @@ The model never sees the project index in full and never decides the final proje
 For each `DraftEntry`, in order:
 
 1. **Date.** Parse `date_expression` in the user's timezone with an explicit resolver
-   (`today`, `yesterday`, weekday names → most recent past occurrence, `dd/mm`, `mm-dd`, ISO,
-   "last Friday"). Ambiguous or future → unresolved slot. Store as ISO `YYYY-MM-DD`, format
-   as `MM-DD-YYYY` at the API boundary.
+   (`today`, `yesterday`, weekday names → most recent past occurrence, `last <weekday>`,
+   `N days/weeks ago`, numeric `MM/DD`, ISO). Unrecognised → unresolved slot; future →
+   blocked. Store as ISO `YYYY-MM-DD`, format as `MM-DD-YYYY` at the API boundary.
+
+   **Numeric dates are read US-first (`MM/DD`), correcting this section's earlier `dd/mm`.**
+   Stelic is a US firm, the default timezone is `America/New_York`, and Zoho itself takes
+   `MM-DD-YYYY` — reading `07/08` as 8 July would silently bill the wrong day. Where the US
+   reading is impossible (a first number above 12) the day/month reading is used, so `25/07`
+   still works. A bare day/month with no year resolves to the most recent such date, so
+   `12/25` typed in July means last Christmas rather than a blocked future date.
+
+   All date arithmetic runs on civil calendar dates, never on subtraction from a UTC
+   instant, so a DST changeover cannot shift a log by a day.
 2. **Hours.** Accept decimal (`7.5`), `h:mm` (`7:30`), `7h30`. Round to the nearest 0.25.
    Reject `< 0.25` or `> 24`. Missing → unresolved slot.
 3. **Project.** Score `project_query` against `ProjectIndex` over project name, account name,
@@ -501,7 +585,6 @@ the affected line:
 
 | Warning | Condition |
 |---|---|
-| Daily cap | user's total for that date (existing Zoho logs + this draft) > `DAILY_HOUR_CAP` |
 | Possible duplicate | an existing log for the same user/project/task/date with ≥ 0.8 description similarity |
 | Backdating | `log_date` older than `BACKDATE_WARN_DAYS` |
 | Future date | `log_date > today` → **blocked**, not a warning |
@@ -522,19 +605,89 @@ automatically.
 Reads use the vault service credential; writes use the signed-in user's token (see §2).
 Zoho API domain for CRM/Books calls: `https://www.zohoapis.com` (US DC).
 
-| Purpose | Call | Credential |
-|---|---|---|
-| Create time log | `POST projects/{projectId}/tasks/{taskId}/logs/` — `date` (`MM-DD-YYYY`), `hours` (`hh:mm`), `bill_status` (`Billable`/`Non Billable`), `notes` | user |
-| Delete time log (undo) | `DELETE projects/{projectId}/tasks/{taskId}/logs/{logId}/` | user |
-| My logs for a range | `GET logs?users_list={userId}&view_type=custom_date&custom_date={start_date:MM-DD-YYYY,end_date:MM-DD-YYYY}&bill_status=all&component_type=task` | service |
-| Projects | `GET projects/` (paged, `index`/`range`) | service |
-| Tasks in a project | `GET projects/{projectId}/tasks/` (paged) | service |
-| Portal users | `GET users/` — needed for the email → user id mapping; verify scope (task 0.2) | service |
+All rows below were exercised against the live portal on 2026-07-25 (spike 1.4) unless
+marked otherwise.
 
-> **Spike first (task 1.4):** whether a log can be created with an owner other than the token
-> holder (decides the auth path — see §2), and whether API-created logs trigger the
-> `stampRoleOnTimelog` workflow. If they do not, `billing_role` must be written by this app
-> after creation, and that becomes a new task.
+| Purpose | Call | Verified |
+|---|---|---|
+| Create time log | `POST projects/{projectId}/tasks/{taskId}/logs/` — form-encoded `date` (`MM-DD-YYYY`), `hours` (`hh:mm`), `bill_status` (`Billable`/`Non Billable`), `notes`, and **`owner` (a `zuid`)** | ✅ `201` |
+| Delete time log (undo) | `DELETE projects/{projectId}/tasks/{taskId}/logs/{logId}/` → `{"response":"Timesheet log Deleted Successfully"}` | ✅ `200` |
+| Logs on a task | `GET projects/{projectId}/tasks/{taskId}/logs/` — returns `timelogs.tasklogs[]` plus `total_log_hours`; **`204` with an empty body when there are none** | ✅ `200`/`204` |
+| Projects | `GET projects/?index=1&range=200` | ✅ `200`, 145 projects |
+| Tasks in a project | `GET projects/{projectId}/tasks/?index=1&range=100` | ✅ `200` |
+| Portal users | `GET users/` | ❌ **`403` `{"code":6403,"message":"Invalid OAuth scope."}`** |
+| Project users | `GET projects/{projectId}/users/` | ❌ **`403`, same** — no workaround at project scope |
+| My logs for a range | `GET logs?users_list=…&view_type=custom_date&custom_date=…` | ❌ **`400` `{"code":6891,"message":"Given URL is wrong"}`** — contract unknown, see below |
+
+**Time-log response shape** (what a created log returns, and what the app must read):
+`id_string`, `owner_id` (a zuid string), `owner_name`, `added_by: { zpuid, name, zuid }`,
+`added_via: "api"`, `log_date` (`MM-DD-YYYY`), `hours` + `minutes` + `total_minutes` +
+`hours_display` (`"00:15"`), `bill_status`, `approval_status`, `approver_name`,
+`custom_fields[]`, `task: { id_string, name }`, `task_list: { id, name }`, `notes`.
+
+**Use `id_string`, never `id`.** Zoho returns both, and the numeric `id` exceeds
+`Number.MAX_SAFE_INTEGER`, so JSON parsing silently corrupts it — observed
+`id: 2620762000000790000` against `id_string: "2620762000000790022"`. Every project, task and
+log identifier in this app is a string taken from `id_string`.
+
+**Portal settings are readable and answer product questions.** `GET /restapi/portals/`
+returns the portal's own configuration, verified 2026-07-25:
+
+| Setting | Value | Consequence |
+|---|---|---|
+| `timesheet.default_billing_status` | `Billable` | Adopt as `DEFAULT_BILL_STATUS` — it is what Zoho already does (open question 5) |
+| `timesheet.is_timesheet_approval_enabled` | `false` | Approval is **not enabled** on this portal, so there is no approval state to respect (open question 7). It also explains why API-created logs read as `Approved` |
+| `timelog_period.log_future_time.allowed` | `false` | Zoho blocks future logs itself; our block agrees with it rather than inventing a rule |
+| `timelog_period.log_past_time.allowed` | `true` | Backdating is permitted with no configured limit — any window is ours to choose (open question 6) |
+| `time_log_restriction_details` | `24:0`/day, `168:0`/week | The technical ceiling. Our 0.25–24h per-entry bound sits inside it; the weekly figure is no limit at all |
+| `task_date_format` | `MM-dd-yyyy` | Independent confirmation that this portal is US-format, supporting the `MM/DD` reading in §4.2 |
+| `startday_of_week` | `sunday` | The week view (task 6.8) must run Sunday–Saturday, not Monday–Sunday |
+| `settings.time_zone` | `America/Los_Angeles` | **Differs from `DEFAULT_TIMEZONE` (`America/New_York`)** — see task 5.10 |
+| `working_days` | Sun–Thu | Looks like a misconfiguration rather than intent; flagged, not acted on |
+
+**Rate limiting.** Responses carry `ratelimit: 100`, `ratelimit-window: 120`,
+`ratelimit-window-unit: seconds`, `ratelimit-remaining`. The client's backoff should read
+these rather than guess.
+
+**API-created logs are born approved.** Every log created through the API came back
+`approval_status: "Approved"` with `approver_name` = the calling user, without anyone
+approving anything. This has a direct consequence for undo — see the timesheet-chat spec,
+CHAT-11.
+
+**The week read-back has no verified contract yet.** Both attempted forms of the portal-wide
+`/logs/` call returned `6891 "Given URL is wrong"`. Task 6.8 cannot be built against §5 as
+previously written; the working alternative is per-project or per-task log reads, which are
+verified above. Raised as task 6.11.
+
+> **Spike 1.4 — done, 2026-07-25.** (a) A log **can** be created with an owner other than the
+> token holder, using `owner=<zuid>` (see §2). (b) An API-created log does **not** get
+> `billing_role` stamped — `custom_fields` came back `[]` both immediately and on re-read, so
+> `stampRoleOnTimelog` does not fire for API writes. This app must therefore write
+> `billing_role` itself after creation; raised as task 6.12. (c) `DELETE` removes a log
+> cleanly, confirmed by re-reading the task to zero logs.
+
+**On the v3 bulk endpoint.** The active production workflow `Stelic Timelog Bulk Loader`
+posts to a newer API version:
+
+```
+POST https://projectsapi.zoho.com/api/v3/portal/911636649/addbulktimelogs
+Content-Type: application/x-www-form-urlencoded
+log_object=<url-encoded JSON array of logs>
+```
+
+This turned out not to matter: v1 accepts `owner` directly, so the bulk endpoint is not
+needed for ownership. It is still the right call for a future batch import, but its contract
+is only partly known — it rejected the spike payload first for a missing `type` field
+(`LESS_THAN_MIN_OCCURANCE`) and then for `date` (`PATTERN_NOT_MATCHED`), so its date format
+differs from v1's `MM-DD-YYYY`. Out of scope until something needs bulk writes.
+
+**Where the credential actually lives.** The vault (`TRNSF-600`) returns metadata and token
+*hints* only — `refresh_token_hint`, no client id or secret. The usable Stelic Zoho
+credential is the n8n credential **`Stelic Credentials`** (`81cg7LlsTQCWMht1`, `oAuth2Api`),
+and n8n does not expose credential values over its API. Consequences: the spike runs as an
+n8n workflow using that credential; and task 0.1 is not a vault `GET` but "extract the client
+id / secret / refresh token from the n8n credential into Railway variables", since
+`design.md §7` requires the app to read them from its own environment.
 
 ### Zoho CRM (v8)
 
@@ -635,7 +788,6 @@ VAULT_EPIC_KEY                  # TRNSF-600
 TOKEN_ENCRYPTION_KEY            # 32-byte key, AES-256-GCM
 SESSION_COOKIE_NAME
 SESSION_MAX_AGE_DAYS            # default 30, sliding
-DAILY_HOUR_CAP                  # open question #4
 BACKDATE_WARN_DAYS              # open question #6
 DEFAULT_BILL_STATUS             # open question #5
 DEFAULT_TIMEZONE                # America/New_York
