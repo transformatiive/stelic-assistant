@@ -35,11 +35,19 @@ const projectSchema = z
     id: z.unknown().optional(),
     name: z.string().default(''),
     status: z.string().optional(),
-    // Set on Stelic projects created from a CRM deal; the join key for §5's CRM lookups.
+    // Documented, but absent on every project of this portal — see `readCustomFields`.
     crm_deal_id: z.union([z.string(), z.number()]).optional(),
-    custom_fields: z
-      .array(z.object({ label_name: z.string().optional(), value: z.unknown() }))
-      .optional(),
+    /**
+     * **Not** `{ label_name, value }` pairs, which is what the documentation suggests and
+     * what this code originally assumed. Zoho Projects returns one single-key object per
+     * field, with the *label itself* as the key:
+     *
+     *   [{ "CRM Deal ID": "7217638000000702236" }, { "Customer": "Google LLC" }]
+     *
+     * Verified against all 145 live projects on 2026-07-25. The old shape matched nothing,
+     * so every project silently lost its deal id and its client name.
+     */
+    custom_fields: z.array(z.record(z.string(), z.unknown())).optional(),
   })
   .passthrough()
 
@@ -48,6 +56,14 @@ export type ZohoProject = {
   name: string
   status?: string
   crmDealId?: string
+  /**
+   * The client, straight off the project.
+   *
+   * Present on every project of this portal, which makes the CRM round trip optional rather
+   * than essential: the index gets its client name without `ZohoCRM.modules.READ` and
+   * without a second API dependency.
+   */
+  customerName?: string
 }
 
 export type ZohoTask = {
@@ -64,22 +80,40 @@ function readProject(raw: unknown): ZohoProject | null {
   const id = identifier.safeParse(parsed.data)
   if (!id.success) return null
 
-  const dealId = parsed.data.crm_deal_id ?? readCustomField(parsed.data.custom_fields)
+  const custom = readCustomFields(parsed.data.custom_fields)
+  const dealId = text(parsed.data.crm_deal_id) ?? custom.get('crm deal id')
+
   return {
     id: id.data,
     name: parsed.data.name.trim(),
     status: parsed.data.status,
-    crmDealId: dealId === undefined ? undefined : String(dealId).trim() || undefined,
+    crmDealId: dealId,
+    customerName: custom.get('customer'),
   }
 }
 
-/** Some portals carry the deal id as a custom field rather than the documented column. */
-function readCustomField(
-  fields: { label_name?: string; value?: unknown }[] | undefined,
-): string | undefined {
-  const match = fields?.find((f) => /crm.*deal|deal.*id/i.test(f.label_name ?? ''))
-  const value = match?.value
-  if (typeof value === 'string' && value.trim()) return value.trim()
+/**
+ * Flatten `[{ "CRM Deal ID": "…" }, { "Customer": "…" }]` into a lookup.
+ *
+ * Keyed on the lowercased label because the labels are configured per portal and a rename
+ * of case alone should not silently drop a field. Blank values are dropped rather than
+ * stored, so a caller can treat "absent" and "empty" the same way.
+ */
+function readCustomFields(
+  fields: Record<string, unknown>[] | undefined,
+): Map<string, string> {
+  const out = new Map<string, string>()
+  for (const field of fields ?? []) {
+    for (const [label, raw] of Object.entries(field)) {
+      const value = text(raw)
+      if (value) out.set(label.trim().toLowerCase(), value)
+    }
+  }
+  return out
+}
+
+function text(value: unknown): string | undefined {
+  if (typeof value === 'string') return value.trim() || undefined
   if (typeof value === 'number') return String(value)
   return undefined
 }

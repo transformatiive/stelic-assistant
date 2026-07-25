@@ -73,13 +73,12 @@ describe('readProject', () => {
   })
 
   it('falls back to a custom field when the column is absent', () => {
+    // The real envelope; see the dedicated block below for why this shape and not the
+    // documented { label_name, value } one.
     const project = readProject({
       id_string: '1',
       name: 'P',
-      custom_fields: [
-        { label_name: 'Something else', value: 'no' },
-        { label_name: 'CRM Deal ID', value: '660000999' },
-      ],
+      custom_fields: [{ Entity: 'Stelic LLC' }, { 'CRM Deal ID': '660000999' }],
     })
     expect(project?.crmDealId).toBe('660000999')
   })
@@ -240,5 +239,67 @@ describe('CRM deals', () => {
     })
     expect((await fetchDealsByIds(c, [])).size).toBe(0)
     expect(fetchImpl).not.toHaveBeenCalled()
+  })
+})
+
+// Verified against all 145 live projects on 2026-07-25 via a temporary n8n probe.
+describe('custom fields, as the live portal actually returns them', () => {
+  const LIVE_SHAPE = [
+    { 'CRM Deal ID': '7217638000003716102' },
+    { 'Books Project ID': 'BOOKS-TEST-1066' },
+    { 'Rate Sheet Name': 'Construction Management' },
+    { 'Billing Model': 'T&M' },
+    { Entity: 'Stelic LLC' },
+    { 'BigTime Project SID': '11824079' },
+    { Customer: 'Clayco Construction Company Inc' },
+  ]
+
+  it('reads one single-key object per field, not { label_name, value } pairs', () => {
+    // The documented shape matched nothing, so every project silently lost its deal id and
+    // its client name — 0 of 145, until the probe showed the real envelope.
+    const project = readProject({
+      id_string: '2620762000000565019',
+      name: '1066 - 1066 - Clayco EKI Data Center',
+      custom_fields: LIVE_SHAPE,
+    })
+    expect(project?.crmDealId).toBe('7217638000003716102')
+    expect(project?.customerName).toBe('Clayco Construction Company Inc')
+  })
+
+  it('matches the label case-insensitively, so a rename of case cannot drop a field', () => {
+    const project = readProject({
+      id_string: '1',
+      name: 'P',
+      custom_fields: [{ 'crm deal ID': '123' }, { CUSTOMER: 'Acme' }],
+    })
+    expect(project?.crmDealId).toBe('123')
+    expect(project?.customerName).toBe('Acme')
+  })
+
+  it('treats a blank value as absent', () => {
+    const project = readProject({
+      id_string: '1',
+      name: 'P',
+      custom_fields: [{ Customer: '   ' }, { 'CRM Deal ID': '' }],
+    })
+    expect(project?.customerName).toBeUndefined()
+    expect(project?.crmDealId).toBeUndefined()
+  })
+
+  it('still prefers the documented column when a portal does populate it', () => {
+    const project = readProject({
+      id_string: '1',
+      name: 'P',
+      crm_deal_id: 'from-column',
+      custom_fields: [{ 'CRM Deal ID': 'from-custom-field' }],
+    })
+    expect(project?.crmDealId).toBe('from-column')
+  })
+
+  it('survives a project with no custom fields at all', () => {
+    expect(readProject({ id_string: '1', name: 'P' })?.customerName).toBeUndefined()
+    expect(
+      readProject({ id_string: '1', name: 'P', custom_fields: [] })?.crmDealId,
+    ).toBeUndefined()
   })
 })

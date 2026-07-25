@@ -231,10 +231,20 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
       CRM
       — `lib/zoho/crm.ts`. One batched call for every deal rather than one per project. The
       deal id is read from the documented column and, failing that, from a custom field, since
-      not every portal carries it the same way. A project whose deal CRM does not return keeps
-      its row and loses only the client name — a deleted deal must not drop a live project out
-      of the index. A `204` on a batch means "none of these exist"; any other error propagates,
-      because a systematically broken CRM read must not quietly look like "no clients"
+      not every portal carries it the same way.
+      **Corrected 2026-07-25 after probing the live portal.** `custom_fields` is not a list of
+      `{ label_name, value }` pairs — it is one single-key object per field, with the label as
+      the key. The original parser matched nothing, so all 145 projects silently lost both
+      their deal id and their client name. Worse, the assumption was invisible: zero matches
+      looks exactly like a portal that simply has no CRM links.
+      The fix turned out to be an improvement. **`Customer` is present on all 145 projects**
+      (44 distinct values, none blank), so the client name comes straight off the project and
+      the CRM round trip is now enrichment for the deal *name* only. A CRM failure, or a
+      service credential without `ZohoCRM.modules.READ`, costs a nice-to-have instead of the
+      index — and `buildProjectIndex` catches it and reports `crmFailure` rather than aborting.
+      A project whose deal CRM does not return keeps its row. A `204` on a batch means "none
+      of these exist"; any other error is caught at the call site, because a systematically
+      broken CRM read must not quietly look like "no clients"
 - [~] 3.3 Fetch the user's last 60 days of logs to derive a recency score per project
       — **Not from Zoho: that read does not exist.** Both documented forms of the portal-wide
       range call return `6891 "Given URL is wrong"` (design §5, task 6.11). The verified
@@ -269,25 +279,56 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
 
 ## 4. Extraction (LLM via OpenRouter)
 
-- [ ] 4.1 OpenRouter client wrapper behind an `Extractor` interface (so the gateway can be
+- [x] 4.1 OpenRouter client wrapper behind an `Extractor` interface (so the gateway can be
       swapped): base URL, `Authorization`, `HTTP-Referer`/`X-Title`, model + fallback list
       from env, provider policy `{data_collection: "deny", zdr: true, require_parameters:
       true}`, timeout, retry once, typed errors distinguishing 402 / 429 / model error.
       **Verify on first call** that the configured slug exists and that ZDR endpoints are
       available for it; fail closed and escalate if not
-- [ ] 4.2 Tool schemas `submit_time_entries` and `reply_only` per `design.md §4.1`, OpenAI
+      — `lib/extract/{openrouter,errors}.ts`. `require_parameters: true` is load-bearing and
+      easy to miss: without it OpenRouter may route to an endpoint that ignores `tools`
+      entirely and the model answers in prose, which surfaces as a mysterious extraction
+      failure rather than a routing problem. A `404` naming the data policy becomes
+      `NoCompliantEndpointError` — **fail closed**, never retry without `zdr`. Retry is once
+      and only for 429/5xx: a 402 will still be a 402 in two seconds, and a schema failure
+      reproduces. One request id spans the retry chain
+- [x] 4.2 Tool schemas `submit_time_entries` and `reply_only` per `design.md §4.1`, OpenAI
       function format, `tool_choice: "required"`; parse `tool_calls[0].function.arguments`
       and validate with Zod before anything downstream sees it
-- [ ] 4.3 System prompt builder: today's date in user timezone, display name, 8 recent
+      — `lib/extract/schema.ts`. Written by hand rather than generated from Zod: a generator
+      emits `anyOf`/`$ref` that some providers mishandle, and the field descriptions are doing
+      real work — they are the only place the model is told to quote the user rather than
+      interpret them. The model never returns a project id, a task id or a resolved date, so a
+      wrong guess by it cannot become a wrong time log
+- [x] 4.3 System prompt builder: today's date in user timezone, display name, 8 recent
       projects as hints, hard rules (never invent hours/projects/descriptions, verbatim
       `project_query` and `date_expression`)
-- [ ] 4.4 Conversation windowing — last N turns only, with token budget
-- [ ] 4.5 Degraded mode: on gateway or tool-call failure, fall back to a guided slot-by-slot
+      — `lib/extract/prompt.ts`, with a test asserting the prompt carries no Zoho id, no rate
+      and no token. Recent projects are presented explicitly as hints, not a list to choose
+      from — the app matches the project, the model never does
+- [x] 4.4 Conversation windowing — last N turns only, with token budget
+      — trimmed from the oldest end, because a follow-up like "make that 6 hours" depends on
+      the newest turns. A single turn over budget is truncated and marked rather than dropped:
+      dropping it would silently remove what the user just said
+- [x] 4.5 Degraded mode: on gateway or tool-call failure, fall back to a guided slot-by-slot
       form; raise an operational alert on 402 (credits exhausted)
-- [ ] 4.6 Usage accounting: request `usage.include`, persist generation id, model actually
+      — `lib/extract/degraded.ts` separates two decisions that are easy to conflate: what the
+      user sees, and whether a human is paged. An exhausted balance looks like a mild hiccup to
+      each individual user while quietly making the bot useless for everyone, so its message is
+      gentle and its alert is loud. Tests assert that no message leaks a provider, model,
+      status code or token, and that **every** failure still leaves the user able to log time
+- [x] 4.6 Usage accounting: request `usage.include`, persist generation id, model actually
       served, tokens and cost against the message row; simple monthly cost query
-- [ ] 4.7 Fixture tests: single entry, two projects one sentence, one project three days,
+      — `lib/extract/usage.ts`. Cost sits on the message that caused it, so "what did the bot
+      cost last month" and "why was that turn expensive" are the same query. Grouped in SQL,
+      since the table grows a row per turn. Cost is passed as a string: the column is
+      `Decimal`, and float drift matters once thousands of rows are summed
+- [x] 4.7 Fixture tests: single entry, two projects one sentence, one project three days,
       missing description, missing hours, pure question, gibberish, malformed tool call
+      — all eight, against recorded response envelopes rather than convenient objects, plus
+      the schema violations the model could plausibly produce: zero hours, hours past 24, an
+      empty `project_query`, no entries, an unknown intent, an undefined tool, and prose where
+      `tool_choice: "required"` should have forced a call
 
 ## 5. Deterministic resolution
 
