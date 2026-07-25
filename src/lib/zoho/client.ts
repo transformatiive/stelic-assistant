@@ -141,11 +141,15 @@ export class ZohoClient {
       const body = await response.text()
 
       if (!response.ok) {
-        // Body is logged, not shown: errors reach the user as sentences (project.md).
+        // The numeric code only, never the body: a body can carry client names and log
+        // notes. Without the code, a 400 is indistinguishable from any other 400 —
+        // which is exactly the position a live rebuild failure left us in.
         this.logger.warn('zoho.http_error', {
           requestId,
           method,
           status: response.status,
+          zohoCode: zohoErrorCode(body),
+          path,
           mode: this.mode,
         })
         throw new ZohoHttpError(response.status, body, requestId)
@@ -179,6 +183,20 @@ export class ZohoClient {
     if (hasForm) headers['Content-Type'] = 'application/x-www-form-urlencoded'
     return headers
   }
+}
+
+/** Zoho wraps failures as `{"code":6401,"message":"…"}`. The code is safe to log; the message may not be. */
+function zohoErrorCode(body: string): number | null {
+  try {
+    const parsed: unknown = JSON.parse(body)
+    if (parsed && typeof parsed === 'object' && 'code' in parsed) {
+      const code = (parsed as { code: unknown }).code
+      return typeof code === 'number' ? code : null
+    }
+  } catch {
+    // Not JSON. Nothing to report beyond the status.
+  }
+  return null
 }
 
 function encodeForm(

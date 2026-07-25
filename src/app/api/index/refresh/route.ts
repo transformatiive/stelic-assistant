@@ -37,10 +37,19 @@ export async function POST(request: Request): Promise<NextResponse> {
   const startedAt = Date.now()
 
   try {
-    const result = await buildProjectIndex({
-      projects: serviceProjectsClient(prisma),
-      crm: serviceCrmClient(prisma),
-    })
+    const result = await buildProjectIndex(
+      { projects: serviceProjectsClient(prisma), crm: serviceCrmClient(prisma) },
+      {
+        onTaskFailure: (project, error) =>
+          console.warn(
+            JSON.stringify({
+              event: 'index.tasks_unreadable',
+              projectId: project.id,
+              status: error instanceof ZohoHttpError ? error.status : null,
+            }),
+          ),
+      },
+    )
 
     const saved = await saveProjectIndex(prisma, session.user.id, result.rows)
     const recency = await refreshRecency(prisma, session.user.id)
