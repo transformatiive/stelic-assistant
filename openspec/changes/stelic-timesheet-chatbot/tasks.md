@@ -550,17 +550,36 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
       a cached `/api/me` would leave the last person's name on a shared device. Navigations
       are network-first so a deploy lands without anyone clearing storage; cache writes go
       through `waitUntil`, or the browser can kill the worker before the write does
-- [ ] 8.4 Chat layout: dynamic viewport height, sticky composer above the keyboard,
-      safe-area insets, 16px minimum input font
-- [ ] 8.5 `MessageList` with auto-scroll and screen-reader announcement of new messages
-- [ ] 8.6 `Chips` component driven by the server `ui` payload
-- [ ] 8.7 `ConfirmationCard` — labelled fields, per-line warnings, total hours, disabled state
-      while committing
-- [ ] 8.8 Result state after commit: per-entry success/failure with retry
-- [ ] 8.9 Week view screen
-- [ ] 8.10 Offline and error states
-- [ ] 8.11 Desktop layout: readable column, Enter to send, Shift+Enter for newline
-- [ ] 8.12 Accessibility pass: labels, focus order, contrast, reduced motion
+- [x] 8.4 Chat layout: dynamic viewport height, sticky composer above the keyboard,
+      safe-area insets, 16px minimum input font — `dvh` rather than `vh` because on iOS `vh`
+      is the height *without* browser chrome, so a `100vh` column is taller than the screen
+      and the composer sits below the fold. The bottom inset goes on the composer, not the
+      page, or the send button hides under the home indicator. `text-base` is not a style
+      choice: iOS zooms a focused input below 16px and never undoes it
+- [x] 8.5 `MessageList` with auto-scroll and screen-reader announcement of new messages
+      — auto-scroll **only when already at the bottom**; scrolled up, a "jump to latest"
+      button appears instead. The live region holds only the newest reply, not the whole
+      transcript, or every change re-announces everything; focus never leaves the composer
+- [x] 8.6 `Chips` component driven by the server `ui` payload — posts a typed value, never a
+      synthesised sentence, and only ever a value the server put there. Disabled once
+      answered rather than removed: the transcript should still read as a conversation
+- [x] 8.7 `ConfirmationCard` — labelled fields, per-line warnings, total hours, disabled state
+      while committing. Every field carries a **visible label**: this is the only screen
+      between a sentence and an invoice line, and a dense line reads fine to whoever built it
+      and is guesswork to everyone else. Warnings and blocks are distinguished in words, not
+      only in colour. A blocked line is shown, marked, and excluded from the total
+- [x] 8.8 Result state after commit: per-entry success/failure with retry — per entry, because
+      "2 of 3 logged" leaves the person to work out which one is missing. A duplicate says so
+      rather than showing a bare tick, which would imply it was written twice
+- [x] 8.9 Week view screen
+- [x] 8.10 Offline and error states — plain sentences with a next step. Nothing is queued or
+      auto-sent; the text stays in the composer and the person decides
+- [x] 8.11 Desktop layout: readable column, Enter to send, Shift+Enter for newline — and Enter
+      only where there is a real keyboard. On a phone the on-screen return key is the only way
+      to get a newline, so hijacking it would make multi-line entries impossible
+- [x] 8.12 Accessibility pass: labels, focus order, contrast, reduced motion — 44px targets,
+      visible focus rings that work on both themes, `motion-reduce` on every transition, and
+      status words (`Blocked:`, `Warning:`, `Logged:`) so meaning never rests on colour alone
 
 ## 9. Hardening
 
