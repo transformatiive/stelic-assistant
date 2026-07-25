@@ -16,7 +16,8 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
-    "prisma:validate": "prisma validate"
+    "prisma:validate": "prisma validate",
+    "zoho:token": "node scripts/zoho-refresh-token.mjs"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.9.0",

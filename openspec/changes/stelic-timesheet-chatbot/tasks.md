@@ -11,9 +11,21 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
       (`refresh_token_hint`, no client id or secret) — confirmed portal `911636649`, domain
       `https://www.zohoapis.com`, Books org `911636705`, scopes, and deploy capabilities.
       The usable credential is the n8n credential `Stelic Credentials` (`81cg7LlsTQCWMht1`,
-      `oAuth2Api`), whose values n8n does not expose over its API. **Remaining:** extract
-      client id / secret / refresh token from it into Railway variables, since the app reads
-      credentials from its own environment (`design.md §7`). Do not register a new one
+      `oAuth2Api`). Do not register a new OAuth client — the app reads credentials from its
+      own environment (`design.md §7`), so the values have to reach Railway some other way.
+      **The refresh token cannot be copied out of n8n.** n8n ran the OAuth dance itself and
+      stored the result encrypted under its own `N8N_ENCRYPTION_KEY`; neither its UI nor its
+      API hands a refresh token back, by design. Only `client_id` and `client_secret` are
+      recoverable from it — they were typed in by hand.
+      So `ZOHO_SERVICE_REFRESH_TOKEN` must be **minted fresh against the same client**, which
+      `scripts/zoho-refresh-token.mjs` (`npm run zoho:token`) does in two steps. It must be
+      the same client as the user flow: `lib/config.ts` carries one `ZOHO_CLIENT_ID` /
+      `ZOHO_CLIENT_SECRET` pair and both the service refresh and the user code exchange use
+      it, so a Zoho *Self Client* — which has its own id and secret — will not work here.
+      Depends on 0.3: the redirect URI must be registered before the authorize step returns
+      a code. Whoever signs in during that step is the identity the reads run as, so use an
+      account with portal-wide visibility.
+      **Remaining:** run it, then set the four variables on the Railway service
 - [x] 0.2 Verify the service token can call `GET /portal/911636649/users/` — **verified
       2026-07-25: it cannot.** `403 {"code":6403,"message":"Invalid OAuth scope."}`, and
       `GET /projects/{id}/users/` fails identically, so there is no project-scoped workaround.
