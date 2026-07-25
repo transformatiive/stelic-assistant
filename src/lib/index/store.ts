@@ -14,6 +14,14 @@ import type { IndexedProjectRow } from './build'
 /** How long an index is trusted before a refresh is due (task 3.4: hourly). */
 export const INDEX_TTL_MS = 60 * 60 * 1000
 
+/**
+ * Floor between rebuilds, whatever else is true.
+ *
+ * Without it, the "no charge codes" rule below would rebuild on every page load for a portal
+ * that genuinely has no tasks anywhere — turning a rare edge case into a rate-limit problem.
+ */
+export const INDEX_MIN_RETRY_MS = 5 * 60 * 1000
+
 export async function saveProjectIndex(
   db: PrismaClient,
   userId: string,
@@ -119,7 +127,17 @@ export async function loadProjectIndex(
   }))
 }
 
-/** True when the index is missing or older than its TTL (task 3.4: build on login, refresh hourly). */
+/**
+ * Whether the index needs rebuilding (task 3.4: build on login, refresh hourly).
+ *
+ * Age is not the only way an index goes bad. A rebuild in which **every** task read failed
+ * produces an index that is fresh by timestamp and useless in substance — it can match a
+ * project but has no charge code to log against. That happened live: 145 projects indexed,
+ * 145 task reads rejected, and the next hour spent trusting the result.
+ *
+ * So an index with no charge codes anywhere is treated as stale, subject to a five-minute
+ * floor so a portal that genuinely has no tasks does not rebuild on every page load.
+ */
 export async function isIndexStale(
   db: PrismaClient,
   userId: string,
@@ -131,5 +149,27 @@ export async function isIndexStale(
     select: { refreshedAt: true },
   })
   if (!newest) return true
-  return now.getTime() - newest.refreshedAt.getTime() > INDEX_TTL_MS
+
+  const age = now.getTime() - newest.refreshedAt.getTime()
+  if (age > INDEX_TTL_MS) return true
+  if (age < INDEX_MIN_RETRY_MS) return false
+
+  return !(await hasAnyChargeCodes(db, userId))
+}
+
+/**
+ * Does a single project in the index have a task to log against?
+ *
+ * Asked as an existence check rather than by loading the index: the answer is one boolean and
+ * the index is hundreds of rows carrying a JSON column each.
+ */
+async function hasAnyChargeCodes(db: PrismaClient, userId: string): Promise<boolean> {
+  const rows = await db.$queryRaw<{ exists: boolean }[]>`
+    SELECT EXISTS (
+      SELECT 1 FROM project_indexes
+      WHERE user_id = ${userId}
+        AND jsonb_array_length(charge_codes) > 0
+    ) AS "exists"
+  `
+  return rows[0]?.exists ?? false
 }

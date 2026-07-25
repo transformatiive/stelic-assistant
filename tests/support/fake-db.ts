@@ -303,6 +303,22 @@ export class FakeDb {
       this.projectIndexes.filter((r) => r.userId === where.userId).length,
   }
 
+  /** Only the one existence check `isIndexStale` makes. Not a SQL engine. */
+  async $queryRaw<T>(strings: TemplateStringsArray, ...values: unknown[]): Promise<T> {
+    const sql = strings.join(' ')
+    if (sql.includes('project_indexes') && sql.includes('jsonb_array_length')) {
+      const userId = values[0] as string
+      const exists = this.projectIndexes.some(
+        (r) =>
+          r.userId === userId &&
+          Array.isArray(r.chargeCodes) &&
+          (r.chargeCodes as unknown[]).length > 0,
+      )
+      return [{ exists }] as T
+    }
+    throw new Error(`FakeDb has no answer for: ${sql.trim().slice(0, 60)}`)
+  }
+
   readonly commitLog = {
     groupBy: async ({
       where,
