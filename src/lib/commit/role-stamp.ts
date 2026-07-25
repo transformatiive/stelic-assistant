@@ -12,6 +12,11 @@ import { stampCustomField } from '@/lib/zoho/timelogs'
  * pipeline has no business knowing about: a CRM client, the project index (for the deal id),
  * and the portal's custom-field column name.
  *
+ * **Nothing here affects billing.** The invoice pipeline resolves role and rate itself from
+ * (user, project) at invoice time (TRNSF-867); this only writes a copy onto the log so a PM
+ * reading the Zoho grid does not have to cross-reference. What billing actually needs is the
+ * log's **owner**, which the commit pipeline sets explicitly and always.
+ *
  * **Every step can legitimately produce nothing**, and each of them is the documented empty
  * case rather than a fault:
  *

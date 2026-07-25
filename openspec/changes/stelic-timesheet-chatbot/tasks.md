@@ -498,10 +498,15 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
       what TRNSF-914's own acceptance criteria specify; deriving a role from the deal's rate
       rows would put a wrong labor category on an invoice, and a wrong role is worse than a
       missing one because nobody looks twice at it.
-      **Two things are needed to finish it**, both outside this repo: someone has to populate
-      `Resource` on the PCCR rows, and `BILLING_ROLE_FIELD` has to be set to the Zoho column
-      name of the read-only `Billing Role` field on the Time Logs layout (the manual step in
-      TRNSF-914). The write path is built and skips itself until then
+      **This is not a blocker, and the earlier framing of it was wrong.** TRNSF-914 says so
+      itself: *"The stamped role is for display/review only; billing still resolves
+      independently by (user, project) at invoice time (TRNSF-867)."* The thing that has to be
+      right on the log is the **owner**, and it is — every log is written on the person's own
+      credential *and* carries an explicit `owner=<zuid>`. Role and rate are derived
+      downstream from (user, project); nothing depends on the stamped copy.
+      So the stamp is a convenience for the PM reading the Zoho grid, off by default. It turns
+      itself on if someone populates `Resource` on the PCCR rows and sets `BILLING_ROLE_FIELD`
+      — neither is needed for correct billing
 - [~] 6.10 Undo guard against already-billed logs: refuse undo when the log's date falls in a
       period the invoice pipeline has already billed, so deleting it cannot orphan a pointer
       in the billing app's `invoiced_logs` ledger (`design.md §2`). Determine the boundary
