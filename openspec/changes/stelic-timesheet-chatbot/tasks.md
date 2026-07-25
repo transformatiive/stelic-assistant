@@ -7,12 +7,19 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
 
 ## 0. Pre-flight (blocking — do before writing code)
 
-- [ ] 0.1 Pull the Stelic credential from the vault: `GET {VAULT_URL}?action=get&epic_key=TRNSF-600`.
-      Confirms portal `911636649`, domain `https://www.zohoapis.com`, Books org `911636705`,
-      and the broad refresh token. **Reuse it — do not register a new service credential**
-- [ ] 0.2 Verify the service token can call `GET /portal/911636649/users/`. The vault scope
-      string has no `ZohoProjects.users.*`; if `portals.ALL` does not cover it, re-consent the
-      token with the users scope added and update the vault entry
+- [~] 0.1 Pull the Stelic credential. **The vault returns metadata and token *hints* only**
+      (`refresh_token_hint`, no client id or secret) — confirmed portal `911636649`, domain
+      `https://www.zohoapis.com`, Books org `911636705`, scopes, and deploy capabilities.
+      The usable credential is the n8n credential `Stelic Credentials` (`81cg7LlsTQCWMht1`,
+      `oAuth2Api`), whose values n8n does not expose over its API. **Remaining:** extract
+      client id / secret / refresh token from it into Railway variables, since the app reads
+      credentials from its own environment (`design.md §7`). Do not register a new one
+- [x] 0.2 Verify the service token can call `GET /portal/911636649/users/` — **verified
+      2026-07-25: it cannot.** `403 {"code":6403,"message":"Invalid OAuth scope."}`, and
+      `GET /projects/{id}/users/` fails identically, so there is no project-scoped workaround.
+      `portals.ALL` does not cover it. **Blocking follow-up: re-consent the token with
+      `ZohoProjects.users.ALL` added and update the vault entry** — task group 2 cannot map an
+      email to a portal user without it
 - [ ] 0.3 Add this app's redirect URI to the **existing** Stelic OAuth client (server-based
       app — the vault entry shows a redirect URI already in use). No new client registration
 - [ ] 0.4 Confirm open questions 2 and 9 in `proposal.md` (portal membership coverage,
@@ -36,19 +43,29 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
       — 10 tables in `prisma/migrations/20260725000000_init`. Prisma 7 takes the connection
       through `prisma.config.ts` + a driver adapter rather than a schema `url`. The migration
       is **generated but not applied**: there is no database until task 1.3.
-- [ ] 1.3 Provision a **new** Railway project (`Stelic Assistant`) with its own app service
+- [~] 1.3 Provision a **new** Railway project (`Stelic Assistant`) with its own app service
       and its own Postgres — not inside the existing `Stelic Financials` project, which is a
-      different product (`design.md §2`). Deploy the empty app to a stable HTTPS domain; that
-      domain is open question 9 and is a prerequisite for both PWA installability and the
-      OAuth redirect URI
-- [ ] 1.4 **DECISIVE SPIKE — run this before task group 2.** Against the real portal with the
-      vault service token and a test task:
-      (a) can a log be created owned by a *different* user (any `owner`-style parameter, any
-      API version)? → decides whether per-user OAuth is mandatory (`design.md §2`);
-      (b) does an API-created log trigger `stampRoleOnTimelog` and populate `billing_role`?
-      (c) does `DELETE` remove it cleanly?
-      Record the answers in `design.md §5`, resolve the provisional decision, and raise a new
-      task if `billing_role` is not stamped
+      different product (`design.md §2`).
+      — Done: project `861f18e1-a732-4f78-a084-312ba41999f1`, Postgres service, app service
+      bound to this repo, and a stable origin **`https://stelic-assistant-production.up.railway.app`**
+      (open question 9 resolved — a generated Railway domain, swappable for a custom one only
+      before users install the PWA). Non-secret env vars set, `DATABASE_URL` referencing the
+      Postgres service.
+      **Remaining:** the credentials from 0.1/0.3/0.5, then a first green deploy — the app
+      fails fast at boot without them, by design (task 1.6). Switch the service's branch from
+      the feature branch to `main` when this PR merges
+- [x] 1.4 **DECISIVE SPIKE — done 2026-07-25**, run as n8n workflows on the `Stelic
+      Credentials` credential against `Transformatiive — TEST Deal 30 - disregard`. Four
+      15-minute `Non Billable` logs created, all four deleted, task verified back to zero.
+      (a) **YES** — `owner=<zuid>` creates a log owned by another user (`201`, verified for
+      two different people). A `zpuid` fails with a misleading `6401`. Decision resolved in
+      `design.md §2`.
+      (b) **NO** — `custom_fields` came back `[]` on creation and on re-read, so
+      `stampRoleOnTimelog` does not fire for API writes → new task 6.12.
+      (c) **YES** — `DELETE` returns `200` and the log is gone.
+      Side findings: portal *and* project user endpoints both `403` (open question 3 answered
+      — no); numeric `id` is precision-corrupted so only `id_string` is usable; API-created
+      logs are born `Approved`; the portal-wide `/logs/` range call is `6891` → task 6.11
 - [~] 1.5 Typed Zoho HTTP client with two credential modes (service / user): base URL from
       env, auth header injection, 401-refresh-once, 429 backoff with jitter, request-id
       logging. Cache the service access token in Postgres — rapid successive refreshes on
@@ -132,7 +149,11 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
 - [ ] 5.5 Slot-state machine: which slot to ask next, ordered project → task → date → hours →
       description, entry by entry
 - [ ] 5.6 Draft persistence, expiry, and re-resolution after each answer
-- [ ] 5.7 Warning engine: daily cap (existing logs + draft), duplicate similarity, backdating
+- [ ] 5.7 Warning engine: duplicate similarity, backdating. **No daily cap** — abandoned as a
+      policy (open question 4); do not sum a user's daily total to warn on it
+- [ ] 5.9 Store each user's Zoho **zuid** alongside their portal user id. The `owner`
+      parameter on a time-log write takes a zuid, not a zpuid (spike 1.4), so the commit
+      pipeline needs it on the `User` row
 - [ ] 5.8 Unit tests for the full resolver against the spec scenarios
 
 ## 6. Commit pipeline
@@ -147,6 +168,21 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
 - [ ] 6.7 Undo: `/api/entries/{id}/undo` with same-day and app-origin guards; refuse approved
       logs
 - [ ] 6.8 Week read-back: `/api/entries/week` grouped by day with total
+- [ ] 6.11 Establish a working week read-back contract. The portal-wide
+      `GET /logs?users_list=…&view_type=custom_date&custom_date=…` returns
+      `6891 "Given URL is wrong"` (verified, both parameter shapes). Find the correct call or
+      build the week view from per-project log reads, which are verified working. 6.8 depends
+      on this
+- [ ] 6.12 Write `billing_role` after creating a log. Spike 1.4(b) proved
+      `stampRoleOnTimelog` does not fire for API-created logs, so a log this app creates is
+      **not** indistinguishable from a UI one until the app stamps the field itself. Derive
+      the value the same way the workflow does (TRNSF-914) and set it on the log's custom
+      field. Without this the invoice pipeline sees an unroled log — check with the pipeline
+      owner whether that breaks pricing or merely degrades reporting
+- [ ] 6.10 Undo guard against already-billed logs: refuse undo when the log's date falls in a
+      period the invoice pipeline has already billed, so deleting it cannot orphan a pointer
+      in the billing app's `invoiced_logs` ledger (`design.md §2`). Determine the boundary
+      from Zoho or configuration — this app must not read the billing database
 - [ ] 6.9 Tests for double-confirm, partial failure, Zoho unavailable, expired draft
 
 ## 7. Chat API

@@ -60,8 +60,9 @@ const configSchema = z.object({
   SESSION_COOKIE_NAME: nonEmpty.default('stelic_session'),
   SESSION_MAX_AGE_DAYS: z.coerce.number().int().positive().default(30),
 
-  // Pending product decisions — proposal.md open questions 4, 5, 6
-  DAILY_HOUR_CAP: z.coerce.number().positive().max(24).default(12),
+  // Pending product decisions — proposal.md open questions 5 and 6.
+  // There is deliberately no DAILY_HOUR_CAP: the cap was abandoned as a policy
+  // (open question 4). The per-entry 0.25-24h bound lives in the hours parser.
   BACKDATE_WARN_DAYS: z.coerce.number().int().nonnegative().default(14),
   DEFAULT_BILL_STATUS: z.enum(['Billable', 'Non Billable']).default('Billable'),
 
