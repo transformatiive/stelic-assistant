@@ -66,9 +66,21 @@ name, client, CRM deal, and the charge codes it can log to. Shared, not per user
 projects is 145 Zoho calls, and a per-user index would take three quarters of an hour for
 fifteen people.
 
-**It refreshes four times a day on a schedule**, with no user involved, because sessions last
-thirty days and a returning user may never trigger a page load that happens to be the first
-of the hour.
+**It refreshes twice a day on a schedule** — 08:00 and 20:00 EST, `0 0,12 * * *` in UTC — with
+no user involved, because sessions last thirty days and a returning user may never trigger a
+page load that happens to be the first of the hour.
+
+The schedule is the `index-refresh-cron` Railway service. It builds
+`docker/cron.Dockerfile` from this repo and runs `scripts/warm-index.mjs` — the same script
+you would run by hand — and needs `APP_URL` and `CRON_SECRET` set on it.
+
+**The command is in the Dockerfile's `ENTRYPOINT`, not in the service's start command, and
+must stay there.** When the service ran a bare `curlimages/curl` image, Railway dropped the
+start command entirely: `curl` ran with no arguments twice a day, printed
+`curl: try 'curl --help'`, and the index never rebuilt for as long as that lasted. Nothing in
+the Railway UI showed a failure — the deployment reads `SUCCESS` either way, because the
+container did start. If you ever move this back to a plain image, check the deploy logs for a
+real rebuild line rather than trusting the status.
 
 ### Rebuild it by hand
 
