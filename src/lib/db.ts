@@ -10,7 +10,27 @@ function createClient(): PrismaClient {
   return new PrismaClient({ adapter: new PrismaPg({ connectionString }) })
 }
 
-// One client per process; in dev, survive hot reloads instead of exhausting connections.
-export const prisma: PrismaClient = globalForPrisma.prisma ?? createClient()
+function getClient(): PrismaClient {
+  if (!globalForPrisma.prisma) {
+    globalForPrisma.prisma = createClient()
+  }
+  return globalForPrisma.prisma
+}
 
-if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma
+/**
+ * The client is created on first *use*, not on import.
+ *
+ * `next build` imports every route module to collect page data, in an environment that has no
+ * `DATABASE_URL` — Railway injects service variables at runtime, not at build. Constructing
+ * eagerly failed the build with "DATABASE_URL is not set" the moment a route first imported
+ * this module. A proxy keeps the ergonomic `prisma.user.findUnique(...)` call site while
+ * deferring the connection to the first query.
+ *
+ * One client per process; in dev it survives hot reloads instead of exhausting connections.
+ */
+export const prisma: PrismaClient = new Proxy({} as PrismaClient, {
+  get(_target, property, receiver) {
+    return Reflect.get(getClient(), property, receiver)
+  },
+  has: (_target, property) => property in getClient(),
+})

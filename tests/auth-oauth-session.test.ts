@@ -5,6 +5,7 @@ import {
   buildAuthorizeUrl,
   exchangeCode,
   readIdentity,
+  readProfile,
   refreshAccessToken,
 } from '@/lib/auth/zoho-oauth'
 import {
@@ -191,6 +192,39 @@ describe('readIdentity', () => {
     }
     expect(readIdentity(corrupted, '911636649').status).toBe('ok')
     expect(readIdentity(bigId, '2620762000000790022').status).toBe('ok')
+  })
+})
+
+describe('readProfile', () => {
+  it('reads the email and name the User row needs', () => {
+    const profile = readProfile({
+      ZUID: 917530087,
+      Email: 'Nuno@Stelic.com',
+      Display_Name: 'Nuno Barreto',
+      First_Name: 'Nuno',
+      Last_Name: 'Barreto',
+    })
+    expect(profile).toEqual({
+      email: 'nuno@stelic.com',
+      displayName: 'Nuno Barreto',
+      zuid: '917530087',
+    })
+  })
+
+  it('falls back to first and last name when there is no display name', () => {
+    expect(
+      readProfile({ Email: 'a@b.com', First_Name: 'Ana', Last_Name: 'Silva' }),
+    ).toEqual({
+      email: 'a@b.com',
+      displayName: 'Ana Silva',
+      zuid: undefined,
+    })
+  })
+
+  it('returns null without an email, which is the join key', () => {
+    expect(readProfile({ Display_Name: 'Nameless' })).toBeNull()
+    expect(readProfile({ Email: '   ' })).toBeNull()
+    expect(readProfile('nonsense')).toBeNull()
   })
 })
 

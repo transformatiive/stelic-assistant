@@ -18,6 +18,9 @@ export const REQUIRED_SCOPES = [
   'ZohoProjects.tasks.READ',
   'ZohoProjects.timesheets.ALL',
   'ZohoProjects.portals.READ',
+  // Email and display name. `/restapi/portals/` identifies the caller by zuid only, and the
+  // `User` row needs an email — it is the join key across CRM, Projects and Books.
+  'AaaServer.profile.READ',
 ] as const
 
 export type ZohoOAuthConfig = {
@@ -225,6 +228,68 @@ export function readIdentity(body: unknown, expectedPortalId: string): IdentityR
       portalName: portal.name,
       role: portal.role,
     },
+  }
+}
+
+/**
+ * Email and display name for the signed-in token (task 2.4, AUTH-3).
+ *
+ * `/restapi/portals/` answers *which portals* and *what zuid*, but never an email. This is
+ * the accounts-server companion to it: same token, different host.
+ */
+const userInfoSchema = z.object({
+  ZUID: z.union([z.string(), z.number()]).optional(),
+  Email: z.string().optional(),
+  Display_Name: z.string().optional(),
+  First_Name: z.string().optional(),
+  Last_Name: z.string().optional(),
+})
+
+export type ZohoProfile = {
+  email: string
+  displayName?: string
+  zuid?: string
+}
+
+export function readProfile(body: unknown): ZohoProfile | null {
+  const parsed = userInfoSchema.safeParse(body)
+  if (!parsed.success) return null
+
+  const email = parsed.data.Email?.trim().toLowerCase()
+  if (!email) return null
+
+  const fullName = [parsed.data.First_Name, parsed.data.Last_Name]
+    .filter((p) => p && p.trim())
+    .join(' ')
+    .trim()
+
+  return {
+    email,
+    displayName: parsed.data.Display_Name?.trim() || fullName || undefined,
+    zuid: parsed.data.ZUID === undefined ? undefined : String(parsed.data.ZUID),
+  }
+}
+
+export async function fetchProfile(
+  accessToken: string,
+  accountsDomain: string,
+  options: { fetchImpl?: typeof fetch } = {},
+): Promise<ZohoProfile | null> {
+  const response = await (options.fetchImpl ?? fetch)(
+    new URL('/oauth/user/info', accountsDomain).toString(),
+    {
+      headers: {
+        Authorization: `Zoho-oauthtoken ${accessToken}`,
+        Accept: 'application/json',
+      },
+      cache: 'no-store',
+    },
+  )
+  if (!response.ok) return null
+  try {
+    return readProfile(await response.json())
+  } catch {
+    return null
   }
 }
 

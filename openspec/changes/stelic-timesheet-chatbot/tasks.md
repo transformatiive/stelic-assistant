@@ -66,7 +66,7 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
       Side findings: portal *and* project user endpoints both `403` (open question 3 answered
       — no); numeric `id` is precision-corrupted so only `id_string` is usable; API-created
       logs are born `Approved`; the portal-wide `/logs/` range call is `6891` → task 6.11
-- [~] 1.5 Typed Zoho HTTP client with two credential modes (service / user): base URL from
+- [x] 1.5 Typed Zoho HTTP client with two credential modes (service / user): base URL from
       env, auth header injection, 401-refresh-once, 429 backoff with jitter, request-id
       logging. Cache the service access token in Postgres — rapid successive refreshes on
       this tenant trigger rate limiting
@@ -74,9 +74,9 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
       by the injected `TokenSource` so a write cannot run on the service credential by
       accident, one silent refresh on 401 then `ZohoAuthError`, full-jitter backoff honouring
       `Retry-After`, no retry on 5xx, one request id across a retry chain.
-      **Outstanding:** the concrete `TokenSource` implementations. The service one needs the
-      `ServiceToken` cache wired to a live database (1.3); the user one needs the AES-256-GCM
-      helpers from task 2.3.
+      Both concrete `TokenSource` implementations now exist in `lib/auth/token-sources.ts`
+      (see task 2.8): the user one backed by `OAuthToken`, the service one by the shared
+      `ServiceToken` cache row.
 - [x] 1.6 Config module reading and validating all env vars at boot (fail fast on missing or
       malformed). Credentials come from the environment only — the runtime never calls the
       vault (`design.md §7`)
@@ -87,36 +87,82 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
 
 ## 2. Authentication and session
 
-- [~] 2.1 `/api/auth/login` — build the Zoho authorize URL with state and PKCE
-      — builder and PKCE done in `lib/auth/{zoho-oauth,pkce}.ts`, tested including an RFC 7636
-      known-answer vector. Scopes deliberately exclude `users.*`. Route handler still to wire
-- [ ] 2.2 `/api/auth/callback` — validate state, exchange code, fetch profile
+- [x] 2.1 `/api/auth/login` — build the Zoho authorize URL with state and PKCE
+      — builder and PKCE in `lib/auth/{zoho-oauth,pkce}.ts`, tested including an RFC 7636
+      known-answer vector; route handler in `app/api/auth/login/route.ts`. Scopes deliberately
+      exclude `users.*` (0.2 proved that endpoint unreachable) but do include
+      `AaaServer.profile.READ`, without which there is no email — see 2.4.
+      `state` and the PKCE verifier ride in a 10-minute AES-256-GCM cookie rather than a
+      database row: nothing to clean up, and a planted cookie only signs the attacker in as
+      themselves
+- [x] 2.2 `/api/auth/callback` — validate state, exchange code, fetch profile
+      — `lib/auth/callback-flow.ts` holds the decisions behind injected ports, so every branch
+      the spec names is unit-testable without a database or a network; the route handler is
+      wiring only. State is checked **before** the exchange, so a mismatch costs no code.
+      A replayed code fails at Zoho and is logged with a request id
 - [x] 2.3 AES-256-GCM encrypt/decrypt helpers for token storage; unit tests
       — `lib/auth/crypto.ts`. Per-value random IV, so the same token encrypts differently each
       time and nobody can tell two users share one. Tampering with either ciphertext or auth
       tag fails closed, and the error is deliberately opaque so a wrong key is
       indistinguishable from a forged payload
-- [ ] 2.4 On first login: identify the user from **their own token** via
+- [x] 2.4 On first login: identify the user from **their own token** via
       `GET /restapi/portals/` → `login_id` (their zuid) and `login_zpuid`, and confirm the
       Stelic portal is among those returned; reject the session if it is not (auth spec:
       *Valid Zoho account without portal membership*). This replaces the email → portal-user
       lookup, which is blocked by scope and no longer needed now that login is per-user.
       Store the zuid — the `owner` parameter needs it (task 5.9)
-      — `readIdentity`/`fetchIdentity` done in `lib/auth/zoho-oauth.ts`, matching on
-      `id_string` so the precision-corrupted numeric portal id cannot cause a false negative
+      — `readIdentity`/`fetchIdentity` in `lib/auth/zoho-oauth.ts`, matching on `id_string` so
+      the precision-corrupted numeric portal id cannot cause a false negative, and the zuid
+      stored as `zoho_projects_user_id` (task 5.9 satisfied for the login path).
+      **`/restapi/portals/` carries no email**, and the `User` row needs one — it is the join
+      key across CRM, Projects and Books. So the flow also calls `GET /oauth/user/info` on the
+      accounts server (`readProfile`/`fetchProfile`) and requests `AaaServer.profile.READ`.
+      An unreadable profile fails closed rather than inventing an address. AUTH-3 in the spec
+      has been rewritten to match: the email → portal-user lookup it originally specified is
+      impossible (0.2) and no longer needed
 - [ ] 2.5 Resolve and store the CRM user id by email; tolerate absence with a flag
-- [~] 2.6 Session issue/validate/revoke; sliding expiry; `HttpOnly` `Secure` `SameSite=Lax`
-      cookie — policy done in `lib/auth/session.ts` (opaque 256-bit ids, cookie attributes,
-      sliding expiry that only writes when the deadline has drifted more than an hour, salted
-      IP hashing). Persistence lands with the route handlers
-- [ ] 2.7 Route middleware: 401 for unauthenticated API calls, redirect for pages
-- [~] 2.8 Token refresh on demand; on refresh failure, revoke session and force re-login
-      — `refreshAccessToken` and `needsRefresh` done and tested, including `invalid_grant` on a
-      revoked consent. Tokens are treated as expiring a minute early so one cannot lapse
-      mid-flight. Session revocation on failure lands with the route handlers
-- [ ] 2.9 `/api/auth/logout` + Sign out control
-- [ ] 2.10 Login screen (single action, Stelic-appropriate styling, no field for a password)
-- [ ] 2.11 Tests for every scenario in `specs/auth/spec.md`
+      — **not started.** `User.crm_user_id` is nullable and stays null through sign-in, which
+      is what AUTH-4 requires of the *absence* case, but nothing resolves it yet. Needs the
+      CRM read client from task group 3
+- [x] 2.6 Session issue/validate/revoke; sliding expiry; `HttpOnly` `Secure` `SameSite=Lax`
+      cookie — policy in `lib/auth/session.ts` (opaque 256-bit ids, cookie attributes, sliding
+      expiry that only writes when the deadline has drifted more than an hour, salted IP
+      hashing); persistence in `lib/auth/store.ts`. An unknown id, an expired one and a
+      revoked one all return the same `invalid`, so probing reveals nothing
+- [x] 2.7 Route middleware: 401 for unauthenticated API calls, redirect for pages
+      — `src/proxy.ts`. **Next 16 renamed the `middleware` file convention to `proxy`**; the
+      old name still builds but warns. It runs in the edge runtime, before Prisma is in reach,
+      so it answers only the cheap question — *is a cookie present at all?* That covers both
+      unauthenticated scenarios with no LLM or Zoho call made. A **forged** id passes it
+      deliberately and dies in `requireApiSession` (`lib/auth/guard.ts`), which can read the
+      database. The alternative — a second, edge-side notion of "valid" — is how the two
+      drift apart
+- [x] 2.8 Token refresh on demand; on refresh failure, revoke session and force re-login
+      — `lib/auth/token-sources.ts` closes this and the outstanding half of 1.5. Tokens are
+      treated as expiring a minute early so one cannot lapse mid-flight. When a refresh is
+      rejected the user's sessions are revoked **before** the grant is cleared, so a
+      concurrent request cannot pick the dead row back up. A stored token that will not
+      decrypt (key rotation) is treated the same as a revoked one — the only recovery is a
+      fresh sign-in. The service source caches its access token in the `ServiceToken` row so
+      replicas share one refresh instead of rate-limiting the credential on every boot
+- [x] 2.9 `/api/auth/logout` + Sign out control
+      — POST, never GET, so a prefetch or an `<img src>` cannot sign anyone out. Revokes only
+      this session (AUTH-5 *Multiple devices*) and drops the stored grant only when no other
+      live session remains. Always 200, so the response reveals nothing about whether the id
+      was real
+- [x] 2.10 Login screen (single action, Stelic-appropriate styling, no field for a password)
+      — `app/login/page.tsx`. A plain `<a>`, so it works before any JavaScript loads. The
+      callback redirects here with an error *code*, not a sentence: the page owns the wording,
+      and a message in a query string is a message an attacker can choose
+- [~] 2.11 Tests for every scenario in `specs/auth/spec.md`
+      — 210 tests green. Covered: state mismatch, replayed code, consent refused, non-member
+      (with the email logged), unreadable identity, missing email, missing refresh token,
+      return-after-a-week sliding, expired/revoked/forged/unknown session, per-device sign
+      out, grant retained while another device is live, tokens-at-rest ciphertext, silent
+      refresh, revoked consent, open-redirect attempts on `returnTo`.
+      **Not yet covered:** *No password is ever handled by the app* and *Nothing leaks to the
+      client* — both are assertions about the built bundle and belong with the UI in task
+      group 8, where there is a rendered app to assert against
 
 ## 3. Project index
 
