@@ -541,6 +541,63 @@ describe('continuing a draft that is waiting on an answer', () => {
     expect(ui.entries[0]).toMatchObject({ hours: 6, date: '2026-07-21' })
   })
 
+  it('lets a typed answer add a task the project does not have yet', async () => {
+    // The live field report, end to end: chips for the project's charge codes, and the user
+    // typed 'i want something else like "i created an app"'. The classifier reads it as an
+    // answer to the task slot; the typed name becomes a task created on confirm, and the
+    // card says so before anything is written.
+    const db = new FakeDb()
+    seedIndex(db)
+    db.projectIndexes[0]!.chargeCodes = [
+      { taskId: 'task_1', taskName: 'Engineering', tasklist: 'Stelic Services' },
+      {
+        taskId: 'task_2',
+        taskName: 'Weekly Updates & Reporting',
+        tasklist: 'Stelic Services',
+      },
+    ]
+    await runChatTurn(
+      db.client,
+      extractorReturning({
+        kind: 'submit_time_entries',
+        reply: 'Which charge code?',
+        entries: [
+          {
+            project_query: 'clayco',
+            date_expression: 'yesterday',
+            hours: 8,
+            description: 'Structural review',
+            billable: null,
+            charge_code_hint: null,
+          },
+        ],
+      }),
+      { ...turnInput, message: '8h clayco yesterday, structural review' },
+    )
+
+    const result = await runChatTurn(
+      db.client,
+      extractorReturning({
+        kind: 'reply_only',
+        reply: 'never reached',
+        intent: 'smalltalk',
+      }),
+      { ...turnInput, message: 'i want something else like "i created an app"' },
+      classifierReturning({
+        intent: 'answer',
+        updates: [{ entryId: 'e1', slot: 'task', value: 'i created an app' }],
+      }),
+    )
+
+    expect(result.ui.kind).toBe('confirmation')
+    const ui = result.ui as Extract<ChatUi, { kind: 'confirmation' }>
+    expect(ui.entries[0]).toMatchObject({
+      taskName: 'i created an app',
+      taskIsNew: true,
+      state: 'ready',
+    })
+  })
+
   it('falls through to ordinary extraction when the classifier says this is unrelated', async () => {
     const db = new FakeDb()
     await draftAwaitingDate(db)

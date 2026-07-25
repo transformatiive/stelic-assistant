@@ -22,6 +22,8 @@ export type CardEntry = {
   state: EntryState
   projectName: string | null
   taskName: string | null
+  /** The task does not exist in Zoho yet — it is created when this card is confirmed. */
+  taskIsNew: boolean
   date: string | null
   hours: number | null
   description: string | null
@@ -79,11 +81,11 @@ export function questionText(entry: DraftEntry, slot: SlotName): string {
     case 'task': {
       if (entry.task.status !== 'unresolved') return 'Which charge code?'
       if (entry.task.reason === 'none_available') {
-        // Not a question the user can answer by choosing — say so rather than offering an
-        // empty list and waiting.
-        return 'That project has no charge codes set up yet, so I can’t log to it. Ask your PM to add one.'
+        // No list to choose from — but no dead end either: Zoho lets anyone add a task, so
+        // typing a name here creates one on confirm (CHAT-3's gap, closed by CHAT-7).
+        return 'That project has no charge codes yet. Type what you worked on and I’ll add it as a new task when you confirm.'
       }
-      return 'Which charge code?'
+      return 'Which charge code? Tap one, or type a new task to add to the project.'
     }
 
     case 'date':
@@ -118,6 +120,7 @@ export function toCardEntry(
     state: entryState(entry),
     projectName: entry.project.status === 'resolved' ? entry.project.projectName : null,
     taskName: entry.task.status === 'resolved' ? entry.task.taskName : null,
+    taskIsNew: entry.task.status === 'resolved' && entry.task.taskId === null,
     date: entry.date.status === 'resolved' ? entry.date.date : null,
     hours: entry.hours.status === 'resolved' ? entry.hours.hours : null,
     description:

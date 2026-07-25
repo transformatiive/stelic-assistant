@@ -58,6 +58,9 @@ export function createRoleStamper(deps: RoleStampDeps): RoleStamper | undefined 
   let crmUserId: Promise<string | null> | null = null
 
   return async (entry, zohoLogId) => {
+    // The commit pipeline passes the resolved id for a task it just created; a null here
+    // would mean a caller skipped that step, and a missing stamp beats a bad request.
+    if (!entry.taskId) return
     crmUserId ??= resolveCrmUserId(deps.db, deps.crm, deps.user)
     const userId = await crmUserId
     if (!userId) return

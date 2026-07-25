@@ -30,6 +30,7 @@ function entry(overrides: Partial<CardEntry> = {}): CardEntry {
     state: 'ready',
     projectName: 'STE-100013 - Clayco: MS Data Center',
     taskName: 'Engineering',
+    taskIsNew: false,
     date: '2026-07-21',
     hours: 8,
     description: 'Structural review',
@@ -157,6 +158,20 @@ describe('the confirmation card', () => {
       />,
     )
     expect(html).toContain('disabled=""')
+  })
+
+  it('marks a task that will be created, in words and before anything is written', () => {
+    // The one thing on this card that writes something beyond a time log — it has to say so.
+    const html = render(
+      <ConfirmationCard
+        entries={[entry({ taskName: 'i created an app', taskIsNew: true })]}
+        totalHours={8}
+        onConfirm={noop}
+        onCancel={noop}
+      />,
+    )
+    expect(html).toContain('i created an app')
+    expect(html).toContain('new — will be added to the project')
   })
 
   it('says a missing field is missing rather than leaving a blank', () => {

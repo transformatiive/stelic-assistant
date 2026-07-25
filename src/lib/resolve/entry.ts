@@ -47,7 +47,18 @@ export type ProjectChoice = {
 }
 
 export type TaskSlot =
-  | { status: 'resolved'; taskId: string; taskName: string; why: string }
+  | {
+      status: 'resolved'
+      /**
+       * `null` means the task does not exist in Zoho yet: the user named one that is not on
+       * the project's list, and the commit pipeline creates it (by this name) before logging.
+       * Zoho itself lets anyone add an arbitrary task to a task list, so the chat does too —
+       * the confirmation card marks it as new, and nothing is created before the confirm tap.
+       */
+      taskId: string | null
+      taskName: string
+      why: string
+    }
   | {
       status: 'unresolved'
       reason: 'none_available' | 'ambiguous' | 'unknown_project'
@@ -191,6 +202,63 @@ export function resolveTask(
   }
 
   return { status: 'unresolved', reason: 'ambiguous', candidates: candidates.slice(0, 6) }
+}
+
+/**
+ * A *typed* answer to the charge-code question — different from a `charge_code_hint` inside a
+ * fresh sentence, and deliberately so.
+ *
+ * A hint ("as scheduler") mentioned in passing must never invent a task: if it matches
+ * nothing, `resolveTask` above falls back to asking. But typing an answer *after being shown
+ * the list* is a deliberate act — "i created an app" against chips for Kick-off and Reporting
+ * means "none of these; add mine". Zoho itself lets anyone add an arbitrary task to a
+ * project, so the answer becomes a task to create at commit time (`taskId: null`), visibly
+ * marked on the confirmation card, created only after the confirm tap.
+ *
+ * A typo still narrows first: "kick off" landing on exactly *Project Kick-off* resolves to
+ * the existing task rather than creating a near-duplicate.
+ */
+export function resolveTypedTask(
+  projectSlot: ProjectSlot,
+  text: string,
+  context: ResolveContext,
+): TaskSlot {
+  if (projectSlot.status !== 'resolved') {
+    return { status: 'unresolved', reason: 'unknown_project', candidates: [] }
+  }
+
+  const name = text.trim()
+  const all = context.chargeCodes.get(projectSlot.projectId) ?? []
+  const narrowed = narrowByHint(all, name)
+
+  if (narrowed.length === 1) {
+    const only = narrowed[0]!
+    return {
+      status: 'resolved',
+      taskId: only.taskId,
+      taskName: only.taskName,
+      why: `matched "${name}" to ${only.taskName}`,
+    }
+  }
+  if (narrowed.length > 1) {
+    return { status: 'unresolved', reason: 'ambiguous', candidates: narrowed.slice(0, 6) }
+  }
+
+  // Too short to be a deliberate new task name — ask again rather than create "x" in Zoho.
+  if (name.length < 3) {
+    return {
+      status: 'unresolved',
+      reason: all.length === 0 ? 'none_available' : 'ambiguous',
+      candidates: all.slice(0, 6),
+    }
+  }
+
+  return {
+    status: 'resolved',
+    taskId: null,
+    taskName: name,
+    why: 'a new task, added to the project when you confirm',
+  }
 }
 
 function narrowByHint(codes: readonly ChargeCode[], hint: string): ChargeCode[] {

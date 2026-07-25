@@ -16,6 +16,11 @@ import { z } from 'zod'
 export const REQUIRED_SCOPES = [
   'ZohoProjects.projects.READ',
   'ZohoProjects.tasks.READ',
+  // Creating the task a user asked to add (CHAT-7's new-task answer) — a user-token write,
+  // like time logs, so the task's creator is the person who asked for it. Sessions from
+  // before this scope existed fail that one call with a sign-in-again message; a fresh
+  // sign-in re-consents and picks it up.
+  'ZohoProjects.tasks.CREATE',
   'ZohoProjects.timesheets.ALL',
   'ZohoProjects.portals.READ',
   // Email and display name. `/restapi/portals/` identifies the caller by zuid only, and the

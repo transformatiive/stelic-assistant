@@ -225,6 +225,19 @@ describe('the continuation prompt', () => {
     expect(prompt).toMatch(/Which project/i)
   })
 
+  it('treats rejecting the offered options as an answer, not a new topic', () => {
+    // The live field report: 'i want something else like "i created an app"' against the
+    // charge-code chips was classified as a new message, and the whole extraction restarted.
+    const prompt = buildContinuationSystemPrompt({
+      today: '2026-07-25',
+      timezone: 'America/New_York',
+      entries: [entry()],
+      pending: { entryId: 'e1', slot: 'task' },
+    })
+    expect(prompt).toMatch(/still an answer/i)
+    expect(prompt).toMatch(/does not exist yet/i)
+  })
+
   it('carries no Zoho id — only the project name the entry already resolved to', () => {
     const prompt = buildContinuationSystemPrompt({
       today: '2026-07-25',

@@ -86,7 +86,13 @@ function EntryLine({ entry, today }: { entry: CardEntry; today?: string }) {
     <li className={`px-4 py-3 ${blocked ? 'bg-red-50 dark:bg-red-950/30' : ''}`}>
       <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
         <Field label="Project" value={entry.projectName} />
-        <Field label="Charge code" value={entry.taskName} />
+        <Field
+          label="Charge code"
+          value={entry.taskName}
+          // In words, not a style: this task does not exist in Zoho yet, and confirming is
+          // what creates it — the one thing on this card that writes something beyond a log.
+          detail={entry.taskIsNew ? 'new — will be added to the project' : undefined}
+        />
         <Field
           label="Date"
           value={entry.date ? formatDate(entry.date, today) : null}

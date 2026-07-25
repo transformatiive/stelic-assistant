@@ -129,12 +129,13 @@ candidates. It SHALL NEVER display a rate, a bill amount, or a budget figure.
 
 #### Scenario: No charge code on that project
 
-- **GIVEN** the user has no PCCR row for that deal
+- **GIVEN** the project has no charge codes at all
 - **WHEN** resolution reaches the task slot
-- **THEN** the entry is blocked with "You don't have a charge code on Clayco — MS Data Center
-  yet. Ask your PM to add one."
-- **AND** the app does not create a task, a tasklist, or a PCCR row
-- **AND** any other entry in the same draft that *is* fully resolved can still be confirmed
+- **THEN** the bot says the project has no charge codes yet and invites the user to type what
+  they worked on, which becomes a task created on confirm — Zoho itself lets anyone add a
+  task, so this is not a dead end
+- **AND** nothing is created in Zoho before the confirmation tap, and any other entry in the
+  same draft that *is* fully resolved can still be confirmed
 
 ---
 
@@ -283,6 +284,17 @@ SHALL degrade to ordinary full-sentence extraction, exactly as if no draft were 
 - **GIVEN** a draft is waiting on an answer
 - **WHEN** the continuation classification call fails
 - **THEN** the turn degrades to ordinary full-sentence extraction rather than failing outright
+
+#### Scenario: A task that does not exist yet
+
+- **GIVEN** the bot is asking which charge code, with chips for the project's existing tasks
+- **WHEN** the user types a task that is not on the list — "i want something else like 'built
+  the app'"
+- **THEN** the typed name becomes the entry's task, marked on the confirmation card as new
+- **AND** the task is created in Zoho only when the card is confirmed, on the signed-in
+  user's own credential, reusing a same-named task if one already exists on the project
+- **AND** a typo that narrows to exactly one existing task resolves to that task instead of
+  creating a near-duplicate
 
 ---
 

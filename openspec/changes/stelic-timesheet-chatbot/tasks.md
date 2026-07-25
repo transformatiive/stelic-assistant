@@ -758,6 +758,25 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
       feedback — added a typing indicator to `src/components/chat/message-list.tsx` (animated
       dots while a turn is in flight, `motion-reduce` respected, announced politely to screen
       readers via the existing live region).
+      **Fourth field report — new-task answers.** The user answered the charge-code chips
+      with 'i want something else like "i created an app"'. Two things were wrong: the
+      classifier read a rejection of the offered options as a new message (extraction
+      restarted and re-asked the project), and there was no way to log to a task that is not
+      on the list — even though Zoho itself lets anyone add an arbitrary task. Both fixed,
+      and CHAT-3's "no charge codes — ask your PM" dead end closed by the same mechanism:
+      a typed answer to the task question that matches no existing charge code becomes a
+      task created at commit time (`resolveTypedTask` in `src/lib/resolve/entry.ts`,
+      `taskId: null` on the slot; a typo still narrows to the existing task first). The card
+      marks it "new — will be added to the project"; nothing is created before the confirm
+      tap; the pipeline (`src/lib/commit/commit.ts`) finds-or-creates by name on the user's
+      own credential (`createTask`/`findTaskByName` in `src/lib/zoho/projects.ts`), so a
+      retry after "task created, log failed" reuses the first attempt's task. New scope
+      `ZohoProjects.tasks.CREATE` added to `REQUIRED_SCOPES` — sessions from before it fail
+      that one action with a sign-in-again message until the person re-consents (runbook
+      notes this). **The create-task call shape is from Zoho's documented v1 API but has not
+      been probed live** the way the time-log calls were — a failed create surfaces as a
+      clean per-entry failure with retry, so the risk is bounded, but the first real use
+      should be watched (10.5's cross-check now includes one chat-created task).
       The rest of the week is still open
 
 ## 11. Handover

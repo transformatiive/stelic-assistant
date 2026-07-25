@@ -96,7 +96,10 @@ Two kinds, deliberately:
 - **The service credential** does the reads — the project index, CRM lookups. One credential,
   stored encrypted in the `ServiceToken` table.
 - **Each person's own token** does the writes. A time log's owner is whose utilisation and
-  invoice line it becomes, so it cannot be a service account.
+  invoice line it becomes, so it cannot be a service account. Writes now include creating a
+  task the user asked to add from chat (`ZohoProjects.tasks.CREATE`) — a scope added after
+  launch, so a session from before it exists fails that one action with a sign-in-again
+  message; signing out and back in re-consents and picks it up. Time logs are unaffected.
 
 ### Reconnecting the service credential
 

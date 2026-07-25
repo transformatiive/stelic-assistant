@@ -202,5 +202,52 @@ export function listTasks(client: ZohoClient, projectId: string): Promise<ZohoTa
   )
 }
 
+/**
+ * Create a task on a project (CHAT-7's new-task answer).
+ *
+ * The one write in this file, and it runs on the signed-in person's own credential like every
+ * other write — a task they asked for carries their name as its creator, same as in the Zoho
+ * UI. No `tasklist_id` is sent: Zoho places the task in the project's default list, which is
+ * also where its UI puts a task added without choosing one.
+ */
+export async function createTask(
+  client: ZohoClient,
+  projectId: string,
+  name: string,
+): Promise<ZohoTask> {
+  const body = await client.requestJson<Record<string, unknown> | undefined>(
+    `projects/${projectId}/tasks/`,
+    { method: 'POST', form: { name } },
+  )
+
+  const rows = body?.tasks
+  const first = Array.isArray(rows) ? readTask(rows[0]) : null
+  if (!first) {
+    // Accepted but unreadable would leave a log with no task to attach to — unlike a time
+    // log, where an unparseable success is still a success, this id is needed *next*, so an
+    // unreadable answer has to be an error the caller can report.
+    throw new Error(`Zoho created a task on ${projectId} but returned no readable id`)
+  }
+  return first
+}
+
+/**
+ * An existing task by name, matched exactly (case-insensitively).
+ *
+ * The commit pipeline calls this before creating a task: a retry after "task created, log
+ * failed" must find the task from the first attempt rather than create a twin, and a name
+ * that already exists on the project — perhaps added in the Zoho UI since the index last
+ * refreshed — should be used, not duplicated.
+ */
+export async function findTaskByName(
+  client: ZohoClient,
+  projectId: string,
+  name: string,
+): Promise<ZohoTask | null> {
+  const wanted = name.trim().toLowerCase()
+  const tasks = await listTasks(client, projectId)
+  return tasks.find((task) => task.name.trim().toLowerCase() === wanted) ?? null
+}
+
 /** Exported for the tests, which assert the id discipline directly. */
 export const _internal = { readProject, readTask, readAllPages }
