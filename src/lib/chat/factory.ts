@@ -1,42 +1,21 @@
 import { loadConfig } from '@/lib/config'
-import {
-  createOpenRouterExtractor,
-  userAttribution,
-  type Extractor,
-} from '@/lib/extract/openrouter'
-import {
-  createOpenRouterContinuationClassifier,
-  type ContinuationClassifier,
-} from '@/lib/chat/continuation'
+import { userAttribution } from '@/lib/extract/openrouter'
+import { createOpenRouterAgent, type Agent } from '@/lib/chat/agent'
 
 /**
- * The extractor the chat routes use, assembled in one place.
+ * The agent the chat routes use, assembled in one place.
  *
  * Built per request rather than cached at module scope: `loadConfig` is the single place that
  * validates the environment, and a client constructed at import time would be built before
  * the environment is guaranteed to exist — the same mistake that broke `next build` when the
  * Prisma client was constructed eagerly.
  */
-export function chatExtractor(): Extractor {
+export function chatAgent(): Agent {
   const config = loadConfig()
-  return createOpenRouterExtractor({
+  return createOpenRouterAgent({
     apiKey: config.OPENROUTER_API_KEY,
     model: config.OPENROUTER_MODEL,
     fallbackModels: config.OPENROUTER_FALLBACK_MODELS,
-    siteUrl: config.OPENROUTER_SITE_URL,
-    appTitle: config.OPENROUTER_APP_TITLE,
-  })
-}
-
-/**
- * The classifier that decides whether a typed reply answers a draft already in progress,
- * assembled the same way and for the same reason as {@link chatExtractor}.
- */
-export function continuationClassifier(): ContinuationClassifier {
-  const config = loadConfig()
-  return createOpenRouterContinuationClassifier({
-    apiKey: config.OPENROUTER_API_KEY,
-    model: config.OPENROUTER_CONTINUATION_MODEL,
     siteUrl: config.OPENROUTER_SITE_URL,
     appTitle: config.OPENROUTER_APP_TITLE,
   })

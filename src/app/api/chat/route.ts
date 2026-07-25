@@ -6,7 +6,7 @@ import { requireApiSession } from '@/lib/auth/guard'
 import { consumeChatQuota } from '@/lib/chat/rate-limit'
 import { runChatTurn } from '@/lib/chat/turn'
 import { checkUserMessage } from '@/lib/chat/sanitise'
-import { chatExtractor, continuationClassifier, userKeyFor } from '@/lib/chat/factory'
+import { chatAgent, userKeyFor } from '@/lib/chat/factory'
 import { route } from '@/lib/observability/route'
 
 /**
@@ -63,20 +63,15 @@ export const POST = route(async function POST(request: Request): Promise<NextRes
     )
   }
 
-  const result = await runChatTurn(
-    prisma,
-    chatExtractor(),
-    {
-      userId: session.user.id,
-      displayName: session.user.displayName,
-      timezone: session.user.timezone,
-      message: checked.message,
-      defaultBillable: config.DEFAULT_BILL_STATUS === 'Billable',
-      backdateWarnDays: config.BACKDATE_WARN_DAYS,
-      userKey: userKeyFor(session.user.id),
-    },
-    continuationClassifier(),
-  )
+  const result = await runChatTurn(prisma, chatAgent(), {
+    userId: session.user.id,
+    displayName: session.user.displayName,
+    timezone: session.user.timezone,
+    message: checked.message,
+    defaultBillable: config.DEFAULT_BILL_STATUS === 'Billable',
+    backdateWarnDays: config.BACKDATE_WARN_DAYS,
+    userKey: userKeyFor(session.user.id),
+  })
 
   return NextResponse.json(result)
 })

@@ -777,6 +777,29 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
       been probed live** the way the time-log calls were — a failed create surfaces as a
       clean per-entry failure with retry, so the risk is bounded, but the first real use
       should be watched (10.5's cross-check now includes one chat-created task).
+      **Fifth field report → the rewrite.** "record 8hr on google" → "Which day was that?" →
+      "sat jul 25th" → "What did you work on?" → "made a timesheet assistant" → "What did you
+      work on?", forever. `validateDescription` accepts that answer, so the answer never
+      reached the resolver — and nothing logged the routing decision, so each of the four
+      previous fixes was a guess. The owner's verdict was that the whole thing was
+      overcomplicated, and it was right: the *controller* was a deterministic slot machine
+      (`nextQuestion` walking project→task→date→hours→description) that could only ask fixed
+      sentences and only accept answers shaped like the slot it was on. Every live failure was
+      the same one — an answer that did not fit was discarded and the question repeated. Adding
+      parsers only moved where the next person fell off.
+      **CHAT-7 rewritten and the controller replaced** (`src/lib/chat/agent.ts`,
+      `agent-tools.ts`): the model runs the conversation with tools — `search_projects`,
+      `list_charge_codes`, `ask_user` (its own words, its own suggested replies),
+      `propose_entries`, `say`. Deterministic code kept exactly the things that must not be
+      guessed: ids come from the index and a proposal naming one it did not issue is refused;
+      dates, hours and descriptions are resolved from the user's words by the same resolvers as
+      before; nothing reaches Zoho without a confirmation tap (CHAT-8 untouched). A proposal
+      that fails validation is handed *back to the model* as problems, so it asks — which is
+      what makes a future date or an unreadable phrase a question rather than a dead end.
+      Chips became suggested replies that send their own text, collapsing the two divergent
+      answer paths (typed vs tapped) into one. Deleted: the slot-question machinery, the
+      continuation classifier, `/api/chat/action`, `OPENROUTER_CONTINUATION_MODEL`. Also added
+      `chat.turn` logging, whose absence is why the earlier fixes were guesswork.
       The rest of the week is still open
 
 ## 11. Handover
