@@ -716,6 +716,21 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
       (4) The composer's send button sat a couple of pixels off from the input box
       (`items-end` against a textarea whose own natural height exceeded its `min-h`). Fixed in
       `src/components/chat/composer.tsx` (`items-center`).
+      **Second field report, same conversation, two more bugs the first fix didn't reach:**
+      (5) The fix in (2) rerouted the composer to `/api/chat/action`, but `applyAnswer` in
+      `src/lib/resolve/draft.ts` only ever accepted a project/task **id** — exactly what a chip
+      posts, never what a person types. A typed correction ("google", "none of these, find
+      more") matched nothing, the entry never changed, and the bot asked the identical
+      ambiguous-project question forever: the free-text fallback existed for every slot except
+      the two it was demonstrated on. Fixed by falling back to `resolveProject`/`resolveTask` —
+      the same matcher a fresh mention gets — whenever the value isn't a known id.
+      (6) The ambiguous-project candidates it *did* offer had nothing to do with what was
+      typed: "etoe project" matched four unrelated projects purely because this portal's own
+      naming convention embeds the literal word "Project" in nearly every project name, and the
+      matcher's trigram/token scoring counted that shared word as a real signal. Fixed in
+      `src/lib/index/normalise.ts` (`FILLER_WORDS`, `dropFillerWords`) and
+      `src/lib/index/match.ts`, scoped to project matching only — the generic
+      `trigramSimilarity` used elsewhere (duplicate-description warnings) is untouched.
       The rest of the week is still open
 
 ## 11. Handover

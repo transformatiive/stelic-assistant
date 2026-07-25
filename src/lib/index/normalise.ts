@@ -39,9 +39,31 @@ export function nameFragments(input: string): string[] {
   return Array.from(new Set(all.filter((s) => s.length >= 2)))
 }
 
+/**
+ * Words that discriminate nothing at this portal, because its own naming convention embeds
+ * them in almost every project — "1020 - Project Farma", "1001 - Project Sabal" — so matching
+ * on the word alone once inflated every project in the index into the same ambiguous bucket,
+ * regardless of what the rest of the query actually named ("etoe project" matching four
+ * unrelated projects that share nothing with "etoe"). Filtered only from the token list scored
+ * for coverage, not from the name itself, so a project still displays under its full title.
+ */
+const FILLER_WORDS = new Set(['project'])
+
 export function tokens(input: string): string[] {
   const norm = normalise(input)
-  return norm === '' ? [] : norm.split(' ')
+  if (norm === '') return []
+  return norm.split(' ').filter((word) => !FILLER_WORDS.has(word))
+}
+
+/**
+ * The same filtering as {@link tokens}, rejoined to a string — for {@link trigramSimilarity},
+ * which compares character runs rather than words and so would not otherwise see the filler
+ * word removed at all. Scoped to project matching in `lib/index/match.ts`; the plain
+ * {@link trigramSimilarity} stays untouched for its other caller (duplicate-description
+ * warnings), where "project" is ordinary content, not naming-convention noise.
+ */
+export function dropFillerWords(input: string): string {
+  return tokens(input).join(' ')
 }
 
 export function trigrams(input: string): Set<string> {

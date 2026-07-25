@@ -2,7 +2,13 @@ import type { PrismaClient } from '@/generated/prisma/client'
 import { validateDescription } from './description'
 import { parseHours } from './hours'
 import { resolveDate } from './date'
-import { resolveTask, type DraftEntry, type ResolveContext, type SlotName } from './entry'
+import {
+  resolveProject,
+  resolveTask,
+  type DraftEntry,
+  type ResolveContext,
+  type SlotName,
+} from './entry'
 
 /**
  * Storing a draft and applying answers to it (task 5.6).
@@ -97,16 +103,28 @@ export function applyAnswer(
     switch (answer.slot) {
       case 'project': {
         const chosen = context.index.find((p) => p.projectId === answer.value)
-        if (!chosen) return entry
-        const project: DraftEntry['project'] = {
-          status: 'resolved',
-          projectId: chosen.projectId,
-          projectName: chosen.projectName,
-          accountName: chosen.accountName,
-          why: 'you picked it',
-        }
+        // A chip posts an id from `context.index` directly. Free text typed instead of tapped
+        // (CHAT-7's fallback) is not an id at all, and re-checking it against the *same*
+        // candidate list it already failed to narrow is how a person typing "google" or
+        // "none of these" got told the identical question forever — the entry never changed,
+        // so `present()` had nothing to do but ask it again. A fresh mention gets matched
+        // properly, so a correction deserves the same matcher, not a stricter one.
+        const project: DraftEntry['project'] = chosen
+          ? {
+              status: 'resolved',
+              projectId: chosen.projectId,
+              projectName: chosen.projectName,
+              accountName: chosen.accountName,
+              why: 'you picked it',
+            }
+          : resolveProject(answer.value, context)
         // The task list belongs to the project, so it has to be recomputed, not kept.
-        return { ...entry, project, task: resolveTask(project, null, context) }
+        return {
+          ...entry,
+          said: { ...entry.said, project: answer.value },
+          project,
+          task: resolveTask(project, null, context),
+        }
       }
 
       case 'task': {
@@ -114,16 +132,15 @@ export function applyAnswer(
           entry.project.status === 'resolved' ? entry.project.projectId : '',
         )
         const chosen = codes?.find((c) => c.taskId === answer.value)
-        if (!chosen) return entry
-        return {
-          ...entry,
-          task: {
-            status: 'resolved',
-            taskId: chosen.taskId,
-            taskName: chosen.taskName,
-            why: 'you picked it',
-          },
-        }
+        const task: DraftEntry['task'] = chosen
+          ? {
+              status: 'resolved',
+              taskId: chosen.taskId,
+              taskName: chosen.taskName,
+              why: 'you picked it',
+            }
+          : resolveTask(entry.project, answer.value, context)
+        return { ...entry, task }
       }
 
       case 'date':
