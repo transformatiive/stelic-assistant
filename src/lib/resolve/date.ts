@@ -21,6 +21,33 @@ export type DateResolution =
   | { status: 'unresolved'; reason: 'missing' | 'unrecognised' }
   | { status: 'blocked'; reason: 'future'; date: string }
 
+const MONTHS: Record<string, number> = {
+  jan: 1,
+  january: 1,
+  feb: 2,
+  february: 2,
+  mar: 3,
+  march: 3,
+  apr: 4,
+  april: 4,
+  may: 5,
+  jun: 6,
+  june: 6,
+  jul: 7,
+  july: 7,
+  aug: 8,
+  august: 8,
+  sep: 9,
+  sept: 9,
+  september: 9,
+  oct: 10,
+  october: 10,
+  nov: 11,
+  november: 11,
+  dec: 12,
+  december: 12,
+}
+
 const WEEKDAYS: Record<string, Weekday> = {
   monday: 1,
   mon: 1,
@@ -74,6 +101,30 @@ function mostRecentWeekday(target: Weekday, today: CivilDate): CivilDate {
   const delta = (weekdayOf(today) - target + 7) % 7
   return addDays(today, -delta)
 }
+
+/**
+ * A month name plus a day, with no year stated — "July 25th", "25 July".
+ *
+ * Mirrors `parseNumeric`'s own convention for a year-less date: the most recent occurrence,
+ * stepping back a year rather than landing eleven months in the future. "July 25th" said in
+ * January means last July, not a date that gets blocked as upcoming.
+ */
+function mostRecentMonthDay(month: number, day: number, today: CivilDate): CivilDate | null {
+  const thisYear = parseIso(formatIso({ year: today.year, month, day } as CivilDate))
+  if (!thisYear) return null
+  if (compare(thisYear, today) <= 0) return thisYear
+  return parseIso(formatIso({ ...thisYear, year: thisYear.year - 1 }))
+}
+
+const ORDINAL = '(?:st|nd|rd|th)?'
+// "july 25th", "jul 25", "july 25th, 2026" — month first.
+const MONTH_THEN_DAY = new RegExp(
+  `^([a-z]+)\\.?\\s+(\\d{1,2})${ORDINAL}(?:,?\\s+(\\d{4}))?$`,
+)
+// "25th of july", "25 july", "25th july 2026" — day first.
+const DAY_THEN_MONTH = new RegExp(
+  `^(\\d{1,2})${ORDINAL}\\s+(?:of\\s+)?([a-z]+)\\.?(?:,?\\s+(\\d{4}))?$`,
+)
 
 export function resolveDate(
   expression: string | null | undefined,
@@ -135,6 +186,30 @@ export function resolveDate(
     return parsed
       ? resolvedOrBlocked(parsed)
       : { status: 'unresolved', reason: 'unrecognised' }
+  }
+
+  // A month name plus a day — "July 25th", "25 July 2026". Checked before weekday names, or
+  // "july" would fall through to the weekday branch and fail to match there instead.
+  const monthThenDay = MONTH_THEN_DAY.exec(text)
+  const dayThenMonth = monthThenDay ? null : DAY_THEN_MONTH.exec(text)
+  const monthDayMatch = monthThenDay
+    ? { month: MONTHS[monthThenDay[1]!], day: monthThenDay[2], year: monthThenDay[3] }
+    : dayThenMonth
+      ? { month: MONTHS[dayThenMonth[2]!], day: dayThenMonth[1], year: dayThenMonth[3] }
+      : null
+
+  if (monthDayMatch?.month) {
+    const { month, year: yearText } = monthDayMatch
+    const day = Number(monthDayMatch.day)
+
+    if (yearText) {
+      const date = parseIso(formatIso({ year: Number(yearText), month, day } as CivilDate))
+      return date ? resolvedOrBlocked(date) : { status: 'unresolved', reason: 'unrecognised' }
+    }
+    // No year stated: the most recent occurrence, matching the bare-numeric convention —
+    // "July 25th" said in January means last July, not a date blocked as eleven months out.
+    const date = mostRecentMonthDay(month, day, today)
+    return date ? resolvedOrBlocked(date) : { status: 'unresolved', reason: 'unrecognised' }
   }
 
   // Weekday names, with or without a "last"/"on" prefix

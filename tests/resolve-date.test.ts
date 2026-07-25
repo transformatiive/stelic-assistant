@@ -117,6 +117,66 @@ describe('resolveDate', () => {
     expect(on('07/04/26')).toEqual({ status: 'resolved', date: '2026-07-04' })
   })
 
+  describe('month names', () => {
+    // A separate "today", matching the live field report exactly: Saturday 25 July 2026 —
+    // three days after the suite's usual Wednesday fixture. Using WED for these would make
+    // "July 25th" a few days *ahead* of today and trigger the year-rollback convention below,
+    // which is correct behaviour but not what this section is testing.
+    const SAT = new Date('2026-07-25T18:00:00Z')
+    const onSat = (expression: string) => resolveDate(expression, { timeZone: NY, now: SAT })
+
+    it('accepts a month name and a day, in either order', () => {
+      // The live bug: "July 25th" was never recognised at all — there was no month-name
+      // parsing, only numeric MM/DD forms, weekday names and relative wording. It fell
+      // through to "unrecognised", and the bot asked a question with no way to answer it
+      // that didn't hit the same gap again.
+      expect(onSat('July 25th')).toEqual({ status: 'resolved', date: '2026-07-25' })
+      expect(onSat('july 25')).toEqual({ status: 'resolved', date: '2026-07-25' })
+      expect(onSat('Jul 25')).toEqual({ status: 'resolved', date: '2026-07-25' })
+      expect(onSat('25 July')).toEqual({ status: 'resolved', date: '2026-07-25' })
+      expect(onSat('25th of July')).toEqual({ status: 'resolved', date: '2026-07-25' })
+    })
+
+    it('resolves the same day the resolver considers today, as today', () => {
+      // The exact case from the field report: asked on 25 July about 25 July.
+      expect(onSat('July 25')).toEqual({ status: 'resolved', date: '2026-07-25' })
+    })
+
+    it('accepts an explicit year with a month name', () => {
+      expect(onSat('July 25th, 2026')).toEqual({ status: 'resolved', date: '2026-07-25' })
+      expect(onSat('25 July 2026')).toEqual({ status: 'resolved', date: '2026-07-25' })
+    })
+
+    it('reads a year-less month name in the past, not eleven months ahead', () => {
+      // Mirrors the bare-numeric convention (12/25 above): no year stated means the most
+      // recent occurrence, not a date that gets blocked as upcoming. Using WED (22 July) here
+      // deliberately, since December is unambiguously in the past either way.
+      expect(on('December 25th')).toEqual({ status: 'resolved', date: '2025-12-25' })
+    })
+
+    it('rolls a near date back a year too, same as the bare-numeric form does', () => {
+      // "07/25" said on 22 July already rolls back a year (tested above); a month name is
+      // the same convention, not a special case for month names specifically.
+      expect(on('July 25')).toEqual({ status: 'resolved', date: '2025-07-25' })
+    })
+
+    it('still blocks a month-and-day date when an explicit year makes it genuinely future', () => {
+      expect(onSat('July 25th, 2027')).toEqual({
+        status: 'blocked',
+        reason: 'future',
+        date: '2027-07-25',
+      })
+    })
+
+    it('rejects a day that does not exist in that month', () => {
+      expect(onSat('February 30th')).toEqual({ status: 'unresolved', reason: 'unrecognised' })
+    })
+
+    it('does not mistake a plain weekday name for a month', () => {
+      expect(onSat('friday')).toEqual({ status: 'resolved', date: '2026-07-24' })
+    })
+  })
+
   it('resolves relative day and week counts', () => {
     expect(on('3 days ago')).toEqual({ status: 'resolved', date: '2026-07-19' })
     expect(on('2 weeks ago')).toEqual({ status: 'resolved', date: '2026-07-08' })

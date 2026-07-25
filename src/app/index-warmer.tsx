@@ -22,6 +22,20 @@ type Status =
   | { kind: 'built'; projects: number }
   | { kind: 'failed'; detail: string }
 
+/**
+ * Is the browser-triggered rebuild actually warranted?
+ *
+ * Only for the gap this component exists for: an index with nothing in it yet. An index that
+ * is merely stale by an hour still has projects to match against, and the schedule (task 3.4)
+ * catches it within the next few hours regardless — rebuilding it from the browser instead
+ * would show every visiting user a multi-minute "Loading your projects from Zoho…" banner for a
+ * staleness window that was never actually broken, and turn one slow Zoho walk into as many as
+ * there are concurrent tabs.
+ */
+export function shouldWarm(check: { stale: boolean; projects: number }): boolean {
+  return check.stale && check.projects === 0
+}
+
 export function IndexWarmer() {
   const [status, setStatus] = useState<Status>({ kind: 'idle' })
 
@@ -32,8 +46,8 @@ export function IndexWarmer() {
       try {
         const check = await fetch('/api/index/refresh', { credentials: 'same-origin' })
         if (!check.ok) return
-        const { stale } = (await check.json()) as { stale: boolean }
-        if (!stale || cancelled) return
+        const body = (await check.json()) as { stale: boolean; projects: number }
+        if (!shouldWarm(body) || cancelled) return
 
         setStatus({ kind: 'building' })
         const built = await fetch('/api/index/refresh', {

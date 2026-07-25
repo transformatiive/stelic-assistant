@@ -60,7 +60,7 @@ export function Composer({
         if (canSend) onSend()
       }}
     >
-      <div className="mx-auto flex w-full max-w-2xl items-end gap-2 px-4 py-3">
+      <div className="mx-auto flex w-full max-w-2xl items-center gap-2 px-4 py-3">
         <label htmlFor="composer" className="sr-only">
           What did you work on?
         </label>
