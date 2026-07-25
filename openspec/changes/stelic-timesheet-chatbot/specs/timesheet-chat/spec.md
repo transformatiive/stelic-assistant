@@ -169,7 +169,8 @@ list).
 
 `date_expression` SHALL be resolved deterministically in the user's IANA timezone (default
 `DEFAULT_TIMEZONE`): `today`, `yesterday`, bare weekday names → the most recent past
-occurrence, `last <weekday>`, `dd/mm`, `mm-dd`, and ISO `YYYY-MM-DD`. Stored as ISO, sent to
+occurrence, `last <weekday>`, `N days/weeks ago`, numeric `MM/DD` (US-first — see
+`design.md` §4.2), and ISO `YYYY-MM-DD`. Stored as ISO, sent to
 Zoho as `MM-DD-YYYY`.
 
 #### Scenario: Bare weekday resolves backwards

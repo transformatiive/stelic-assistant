@@ -109,10 +109,17 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
       CRM
 - [ ] 3.3 Fetch the user's last 60 days of logs to derive a recency score per project
 - [ ] 3.4 Persist to `ProjectIndex`; build on login, refresh hourly and on demand
-- [ ] 3.5 Matcher: normalisation (case, punctuation, id prefixes), token + trigram scoring,
+- [x] 3.5 Matcher: normalisation (case, punctuation, id prefixes), token + trigram scoring,
       recency boost, thresholds per `design.md §4.2`
-- [ ] 3.6 Unit tests with a realistic fixture: exact name, client-only, deal name, misspelling,
-      two-candidate tie, no match
+      — `lib/index/{normalise,match}.ts`. Trigram Dice alone scored `clacyo` against `clayco`
+      at ~0.33 and would have lost real typos, so matching also uses Jaro–Winkler per token
+      with a 0.87 floor (below which a score is coincidence between unrelated words, not a
+      typo). Recency boost is capped at 0.10, deliberately below the 0.15 resolve gap, so a
+      recently-used project can never silently win a genuine ambiguity. Every candidate
+      reports the field and text it matched on, so the bot can explain itself
+- [x] 3.6 Unit tests with a realistic fixture: exact name, client-only, deal name, misspelling,
+      two-candidate tie, no match — fixture uses live-portal name shapes (`STE-100013 - …`,
+      `Google LLC — 1080 - Google: …`)
 - [ ] 3.7 Live fallback search (CRM Accounts → Deals → projects by `crm_deal_id`; Projects by
       name) when the index misses
 
@@ -140,10 +147,18 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
 
 ## 5. Deterministic resolution
 
-- [ ] 5.1 Date resolver (timezone-aware): today, yesterday, weekday names, "last <weekday>",
-      `dd/mm`, `mm-dd`, ISO; reject future; unit tests around DST boundaries
-- [ ] 5.2 Hours parser: decimal, `h:mm`, `7h30`; round to 0.25; bounds 0.25–24
-- [ ] 5.3 Description validator: trim, minimum length, filler-word rejection list
+- [x] 5.1 Date resolver (timezone-aware): today, yesterday, weekday names, "last <weekday>",
+      `N days/weeks ago`, numeric `MM/DD`, ISO; reject future; unit tests around DST boundaries
+      — `lib/resolve/{civil-date,date}.ts`. All arithmetic is on civil calendar dates rather
+      than UTC subtraction, so DST cannot shift a log by a day; tested across both 2026
+      changeovers. Numeric dates read US-first, a documented correction to `design.md` §4.2
+- [x] 5.2 Hours parser: decimal, `h:mm`, `7h30`; round to 0.25; bounds 0.25–24
+      — `lib/resolve/hours.ts`, also accepts `7,5`, `90m`, `7 hours 30 mins`. Rounds half away
+      from zero and pins the result to 2dp so float drift cannot reach a committed value
+- [x] 5.3 Description validator: trim, minimum length, filler-word rejection list
+      — `lib/resolve/description.ts`. Rejects filler *phrases* too ("misc stuff and things"),
+      which a length check alone would pass, while accepting text that merely contains a
+      filler word ("rebar inspection and misc punch list")
 - [ ] 5.4 Task resolver: PCCR lookup by (deal, CRM user) → labour category → task match;
       handle none / one / many
 - [ ] 5.5 Slot-state machine: which slot to ask next, ordered project → task → date → hours →
@@ -158,7 +173,10 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
 
 ## 6. Commit pipeline
 
-- [ ] 6.1 Idempotency key derivation + unique constraint enforcement
+- [~] 6.1 Idempotency key derivation + unique constraint enforcement
+      — derivation done in `lib/commit/idempotency.ts`, normalising hours and description so
+      `8` vs `8.00` and stray whitespace cannot produce two keys for one booking. The unique
+      constraint is already in the Prisma schema; enforcement lands with the commit pipeline
 - [ ] 6.2 `CommitLog` write-before-call, update-after-response
 - [ ] 6.3 Create time log in Zoho with correct `MM-DD-YYYY` date and `hh:mm` hours
 - [ ] 6.4 Per-entry result aggregation; partial-failure reporting; retry-failed-only path

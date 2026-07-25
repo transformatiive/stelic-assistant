@@ -1,0 +1,157 @@
+import {
+  type CivilDate,
+  type Weekday,
+  addDays,
+  compare,
+  formatIso,
+  parseIso,
+  todayIn,
+  weekdayOf,
+} from './civil-date'
+
+/**
+ * Turns the user's verbatim date wording into a calendar date (task 5.1).
+ *
+ * The model never resolves a date — it copies the words out and this decides what they mean,
+ * in the user's own timezone. See `specs/timesheet-chat/spec.md` CHAT-5.
+ */
+
+export type DateResolution =
+  | { status: 'resolved'; date: string }
+  | { status: 'unresolved'; reason: 'missing' | 'unrecognised' }
+  | { status: 'blocked'; reason: 'future'; date: string }
+
+const WEEKDAYS: Record<string, Weekday> = {
+  monday: 1,
+  mon: 1,
+  tuesday: 2,
+  tue: 2,
+  tues: 2,
+  wednesday: 3,
+  wed: 3,
+  thursday: 4,
+  thu: 4,
+  thur: 4,
+  thurs: 4,
+  friday: 5,
+  fri: 5,
+  saturday: 6,
+  sat: 6,
+  sunday: 7,
+  sun: 7,
+}
+
+/**
+ * Numeric dates are read **US-first** (`MM/DD`, `MM-DD`), which deviates from `design.md`
+ * §4.2's `dd/mm`. Stelic is a US firm, the app's default timezone is `America/New_York`, and
+ * Zoho itself takes `MM-DD-YYYY` — reading `07/08` as 8 July here would silently bill the
+ * wrong day. Where the US reading is impossible (a first number above 12) the day/month
+ * reading is used instead, so `25/07` still works for anyone who types it that way.
+ */
+function parseNumeric(a: number, b: number, today: CivilDate): CivilDate | null {
+  const candidates: CivilDate[] = []
+  if (a >= 1 && a <= 12 && b >= 1 && b <= 31)
+    candidates.push({ year: today.year, month: a, day: b })
+  if (b >= 1 && b <= 12 && a >= 1 && a <= 31)
+    candidates.push({ year: today.year, month: b, day: a })
+
+  for (const candidate of candidates) {
+    const valid = parseIso(formatIso(candidate))
+    if (!valid) continue
+    // A bare day/month with no year means the most recent such date, so a January entry
+    // typed in December belongs to the year just gone, not eleven months in the future.
+    if (compare(valid, today) > 0) {
+      const lastYear = parseIso(formatIso({ ...valid, year: valid.year - 1 }))
+      if (lastYear) return lastYear
+    }
+    return valid
+  }
+  return null
+}
+
+/** Most recent occurrence of a weekday, counting today. */
+function mostRecentWeekday(target: Weekday, today: CivilDate): CivilDate {
+  const delta = (weekdayOf(today) - target + 7) % 7
+  return addDays(today, -delta)
+}
+
+export function resolveDate(
+  expression: string | null | undefined,
+  options: { timeZone: string; now?: Date } = { timeZone: 'America/New_York' },
+): DateResolution {
+  const today = todayIn(options.timeZone, options.now ?? new Date())
+
+  if (expression === null || expression === undefined || expression.trim() === '') {
+    return { status: 'unresolved', reason: 'missing' }
+  }
+
+  const raw = expression.trim().toLowerCase().replace(/\s+/g, ' ')
+  const text = raw.replace(/^(on|last|this|the)\s+the\s+/, '$1 ')
+
+  const resolvedOrBlocked = (date: CivilDate): DateResolution =>
+    compare(date, today) > 0
+      ? { status: 'blocked', reason: 'future', date: formatIso(date) }
+      : { status: 'resolved', date: formatIso(date) }
+
+  if (/^(today|tod|this morning|this afternoon|tonight)$/.test(text)) {
+    return { status: 'resolved', date: formatIso(today) }
+  }
+  if (/^(yesterday|yday|last night)$/.test(text)) {
+    return { status: 'resolved', date: formatIso(addDays(today, -1)) }
+  }
+  if (/^(tomorrow|tmrw)$/.test(text)) {
+    return { status: 'blocked', reason: 'future', date: formatIso(addDays(today, 1)) }
+  }
+
+  // "3 days ago", "2 weeks ago"
+  const ago = /^(\d{1,3})\s*(day|days|week|weeks)\s+ago$/.exec(text)
+  if (ago) {
+    const n = Number(ago[1])
+    const days = ago[2]!.startsWith('week') ? n * 7 : n
+    return resolvedOrBlocked(addDays(today, -days))
+  }
+
+  // ISO, the unambiguous form
+  const iso = parseIso(text)
+  if (iso) return resolvedOrBlocked(iso)
+
+  // Full numeric with a year: MM-DD-YYYY or DD/MM/YYYY etc.
+  const withYear = /^(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{2}|\d{4})$/.exec(text)
+  if (withYear) {
+    const year = Number(withYear[3]!.length === 2 ? `20${withYear[3]}` : withYear[3])
+    const a = Number(withYear[1])
+    const b = Number(withYear[2])
+    const usFirst = parseIso(formatIso({ year, month: a, day: b } as CivilDate))
+    const dayFirst = parseIso(formatIso({ year, month: b, day: a } as CivilDate))
+    const picked = usFirst ?? dayFirst
+    if (picked) return resolvedOrBlocked(picked)
+    return { status: 'unresolved', reason: 'unrecognised' }
+  }
+
+  // Bare numeric day/month
+  const bare = /^(\d{1,2})[/\-.](\d{1,2})$/.exec(text)
+  if (bare) {
+    const parsed = parseNumeric(Number(bare[1]), Number(bare[2]), today)
+    return parsed
+      ? resolvedOrBlocked(parsed)
+      : { status: 'unresolved', reason: 'unrecognised' }
+  }
+
+  // Weekday names, with or without a "last"/"on" prefix
+  const weekday = /^(?:on\s+)?(last\s+|this\s+past\s+|past\s+)?([a-z]+)$/.exec(text)
+  if (weekday) {
+    const target = WEEKDAYS[weekday[2]!]
+    if (target) {
+      const recent = mostRecentWeekday(target, today)
+      const isToday = compare(recent, today) === 0
+      // "last Friday" said on a Friday means the previous one, not this morning.
+      const explicitlyLast = Boolean(weekday[1])
+      return {
+        status: 'resolved',
+        date: formatIso(explicitlyLast && isToday ? addDays(recent, -7) : recent),
+      }
+    }
+  }
+
+  return { status: 'unresolved', reason: 'unrecognised' }
+}
