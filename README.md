@@ -1,95 +1,103 @@
 # Stelic Assistant — timesheet chatbot
 
-Spec-Driven Development artifacts for **Stelic Assistant** — a conversational timesheet-entry
-PWA for Stelic, LLC, backed by Zoho Projects + Zoho CRM.
+Log your time by saying what you did. A conversational timesheet PWA for Stelic, LLC, writing
+into Zoho Projects.
+
+> **8h on Clayco yesterday — structural review**
+
+**https://stelic-assistant-production.up.railway.app**
 
 Client: Stelic, LLC · Epic: [TRNSF-589](https://transformatiive.atlassian.net/browse/TRNSF-589) ·
-Build ticket: [TRNSF-1321](https://transformatiive.atlassian.net/browse/TRNSF-1321) ·
-Target agent: Claude Code · Model gateway: OpenRouter
+Build ticket: [TRNSF-1321](https://transformatiive.atlassian.net/browse/TRNSF-1321)
 
-> Spec only so far — no application code in this repo yet.
+| I want to… | Read |
+|---|---|
+| use it | [`docs/user-guide.md`](docs/user-guide.md) |
+| run it, fix it, rotate a credential | [`docs/runbook.md`](docs/runbook.md) |
+| understand why it is built this way | [`openspec/…/design.md`](openspec/changes/stelic-timesheet-chatbot/design.md) |
+| know what it must do | the three [`spec.md`](openspec/changes/stelic-timesheet-chatbot/specs) files |
 
 ---
 
-## What's in here
+## The one idea
+
+**The model extracts; deterministic code decides.**
+
+A language model reads the sentence and hands back *phrases* — "clayco", "yesterday", "8h".
+Nothing it returns becomes a project, a date or a number of hours: the project comes from a
+scoring matcher over an index of the portal, the date from civil-date arithmetic in the
+person's own timezone, the hours from a bounds checker. Then a human taps **Confirm** and only
+then does anything reach Zoho.
+
+That boundary is why prompt injection is uninteresting here. The widest a crafted message can
+get is a draft card that looks wrong to whoever typed it — there are tests for each link in
+that chain, including a model insisting it has already logged 100 hours (it produces no draft
+at all) and one returning 100 hours (a blocked line, and a total of zero).
+
+## How it hangs together
 
 ```
-openspec/
-├── project.md                                  # Repo conventions + stack for the agent
-└── changes/
-    └── stelic-timesheet-chatbot/
-        ├── proposal.md                         # Why, scope, non-goals, MVP
-        ├── design.md                           # Architecture, decisions, data model, API contracts
-        ├── tasks.md                            # Implementation checklist (11 groups, ~90 tasks)
-        └── specs/
-            ├── auth/spec.md                    # Login, session, identity mapping
-            ├── timesheet-chat/spec.md          # NLU, resolution, confirmation, commit
-            └── pwa-shell/spec.md               # Installability, mobile UX, chat surface
+sentence → scope check → OpenRouter (phrases) → resolvers (decisions) → card → Zoho
+                ↓                    ↓                     ↓                       ↓
+          refuse rates,      no ids, no email,     project index,          owner = the person,
+          budgets, approvals  no rates in prompt   civil dates, bounds     idempotency key
 ```
 
-Read them in that order. `proposal.md` says what and why, `design.md` says how, the three
-`spec.md` files are the behaviour contract (Given/When/Then), and `tasks.md` is the order of
-work.
+- **Auth** is Zoho's own login, so Stelic manages people in the Zoho One console and nowhere
+  else. Reads use one shared service credential; **writes use each person's own token**,
+  because a time log's owner is whose utilisation and invoice line it becomes.
+- **The project index** is shared and rebuilt on a schedule four times a day. 145 projects is
+  145 Zoho calls, so one copy serves everybody.
+- **The commit pipeline** writes its ledger row *before* calling Zoho and updates it after. An
+  accepted write whose response cannot be parsed is recorded as a **success** — calling it a
+  failure would invite the retry that books the hours twice.
 
-## How to use
+## Layout
 
-### 1. Set up OpenSpec tooling
+```
+src/
+  app/                 routes and the chat surface
+  components/chat/     transcript, chips, confirmation card, week panel
+  lib/
+    auth/              Zoho OAuth, sessions, per-user timezone
+    zoho/              typed clients: projects, tasks, time logs, CRM
+    extract/           OpenRouter, tool schemas, degradation
+    resolve/           the deterministic half — dates, hours, matching, drafts
+    commit/            idempotency, the write pipeline, undo
+    chat/              turn orchestration, rate limit, scope guard
+    observability/     one logger, one alert channel
+docs/                  user guide, runbook
+openspec/              proposal, design, specs, task list
+e2e/                   Playwright, against a real deployment
+```
+
+## Working on it
 
 ```bash
-git clone git@github.com:transformatiive/stelic-assistant.git
-cd stelic-assistant
-npm install -g @fission-ai/openspec@latest
-openspec init          # merge with the existing openspec/ folder; do not overwrite it
+npm install
+npm run dev
+
+npx tsc --noEmit && npx eslint . && npx vitest run   # 641 tests
+npm run build && npm run check:bundle                # …and no secret in the client bundle
 ```
 
-### 2. Start work in Claude Code
+Environment variables are listed in the [runbook](docs/runbook.md#1-environment-variables).
 
-Paste this as the first prompt:
+### Two things this codebase learned the hard way
 
-```
-Read openspec/project.md, then openspec/changes/stelic-timesheet-chatbot/proposal.md,
-design.md and the three delta specs under specs/.
+**Never guess a Zoho shape.** `custom_fields` is not `{label_name, value}` pairs — it is one
+single-key object per field, with the label as the key. The wrong assumption matched nothing
+and silently cost every project its client name, across all 145, for as long as nobody looked.
 
-Use proposal.md and design.md as context. Before writing any code, confirm that every
-requirement in the three spec.md files is covered by a task in tasks.md, and report any gap.
+**A trailing slash is a contract.** `GET .../logs/` answers `6891 "Given URL is wrong"`;
+`GET .../logs` answers `200`. Nine parameter variants were tried against the wrong form and
+all nine failed identically, which is precisely what a missing endpoint looks like.
 
-Then implement tasks.md group by group, in order. After each task: mark it complete in
-tasks.md, state what changed, and self-check against the relevant Given/When/Then scenario.
-Do not skip ahead. Do not implement anything that is not in tasks.md. If a scenario is
-ambiguous or a decision in design.md conflicts with reality (API shape, field name), stop
-and ask instead of guessing.
+Both were found by probing the live portal. Test fixtures in this repo are captured
+responses, not invented ones.
 
-Never hardcode credentials. All secrets come from environment variables listed in
-design.md §7.
-```
+## Status
 
-### 3. Close out
-
-After implementation run `/opsx:archive` to fold the delta specs into the main specs.
-
----
-
-## Before the first line of code
-
-**Credentials are already provisioned.** The Stelic Zoho credential lives in the vault under
-**`TRNSF-600`** — portal `911636649`, domain `https://www.zohoapis.com`, CRM + Books +
-Projects + timesheets scopes. Reuse it for all reads; register nothing new. The existing
-OAuth client just needs this app's redirect URI added (task 0.3). Two things to verify: that
-the token's scopes cover `GET /portal/{id}/users/` (task 0.2), and the production domain.
-
-**One spike decides the shape of the auth module** (task 1.4): can a portal-admin token
-create a time log owned by a *different* user? Zoho's documented parameters say no and their
-support position has said no, but that evidence predates the current API and was never tested
-against this portal. If it is no, per-user Zoho login is mandatory — the log's owner *is* the
-timesheet. If it is yes, the service credential can do the writes and login gets simpler.
-Do not build task group 2 before this has an answer. Record it in `design.md §5`.
-
-**Still open:** portal-membership coverage, default billable status, backdating window, and
-whether the app must respect timesheet approval state. Full list with owners: `proposal.md` →
-*Open questions*. Resolved: the production domain, and the daily hour cap — there is no cap
-(TRNSF-1249 abandoned).
-
-The model gateway is OpenRouter, pinned to `anthropic/claude-sonnet-5` with
-`data_collection: "deny"` and `zdr: true`. Task 4.1 must confirm ZDR endpoints are available
-for that slug — if not, escalate rather than dropping the flag. Running cost lands near
-$20/month at 30 users, rising to ~$30 when Sonnet 5 pricing changes on 1 September 2026.
+Built and deployed. What remains is verification that needs real people and real devices —
+`tasks.md` group 10 — and the two configuration items in the runbook's
+[known gaps](docs/runbook.md#6-known-gaps).

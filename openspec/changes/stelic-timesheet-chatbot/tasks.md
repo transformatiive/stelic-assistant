@@ -658,7 +658,16 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
 - [ ] 10.1 Every scenario in `specs/auth/spec.md` passes manually
 - [ ] 10.2 Every scenario in `specs/timesheet-chat/spec.md` passes manually
 - [ ] 10.3 Every scenario in `specs/pwa-shell/spec.md` passes manually
-- [ ] 10.4 Playwright E2E: login → single entry → confirm → verify in Zoho → undo
+- [x] 10.4 Playwright E2E: login → single entry → confirm → verify in Zoho → undo
+      — `e2e/timesheet.spec.ts`, and it runs against a **real deployment** rather than a dev
+      server with a mocked Zoho. That is the whole point: everything below the API boundary is
+      already covered by unit tests against recorded shapes, and what those cannot tell you is
+      whether the shapes are still true. Both of this project's worst bugs would have passed a
+      mocked run. It verifies the write by reading it back **from Zoho**, not from our own
+      screen, and undoes itself so a run leaves the timesheet as it found it. Skips rather
+      than fails without credentials — a red run meaning "not configured here" is a red run
+      people stop reading. **Not yet executed against production**: it needs a live session
+      cookie, which is 10.5's job to supply
 - [ ] 10.5 Cross-check five app-created logs against the Zoho Projects UI: owner, task,
       tasklist, date, hours, bill status, `billing_role`
 - [ ] 10.6 Confirm an app-created log flows correctly into the existing invoice pipeline in a
@@ -668,6 +677,15 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
 
 ## 11. Handover
 
-- [ ] 11.1 One-page user guide (English, screenshots, install instructions per platform)
-- [ ] 11.2 Runbook: env vars, token rotation, index rebuild, common errors
+- [x] 11.1 One-page user guide (English, screenshots, install instructions per platform)
+      — `docs/user-guide.md`. Install steps for iOS, Android and desktop; how to phrase an
+      entry; what it will not do and why. **No screenshots yet** — they should be of the real
+      thing on a real phone, which is 10.7
+- [x] 11.2 Runbook: env vars, token rotation, index rebuild, common errors
+      — `docs/runbook.md`. Every variable and what breaks without it, the two-credential
+      split and how to reconnect the service one, the Zoho rate limit (a `400`, not a `429`,
+      with a quarter-hour lockout) and why the rebuild is deliberately slow, an error table
+      keyed on what you actually see in the logs, and the known gaps stated plainly rather
+      than left for the next person to rediscover.
+      **`README.md` rewritten** too: it still claimed the repo held no application code
 - [ ] 11.3 Jira: link the repo and this spec folder to the Stelic epic
