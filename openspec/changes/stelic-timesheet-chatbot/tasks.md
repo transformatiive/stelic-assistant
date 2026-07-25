@@ -28,8 +28,11 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
 - [ ] 1.2 Add Prisma with the schema from `design.md §3` — including `ServiceToken` (service
       access-token cache, task 1.5), `RateLimit` (task 7.4) and the gateway accounting columns
       on `Message` (task 4.6); first migration
-- [ ] 1.3 Provision Railway service + Postgres; deploy the empty app to a stable HTTPS domain
-      (the existing `stelic-billing-period` Railway project is the natural home)
+- [ ] 1.3 Provision a **new** Railway project (`Stelic Assistant`) with its own app service
+      and its own Postgres — not inside the existing `Stelic Financials` project, which is a
+      different product (`design.md §2`). Deploy the empty app to a stable HTTPS domain; that
+      domain is open question 9 and is a prerequisite for both PWA installability and the
+      OAuth redirect URI
 - [ ] 1.4 **DECISIVE SPIKE — run this before task group 2.** Against the real portal with the
       vault service token and a test task:
       (a) can a log be created owned by a *different* user (any `owner`-style parameter, any
