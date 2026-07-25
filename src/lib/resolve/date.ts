@@ -130,6 +130,26 @@ const DAY_THEN_MONTH = new RegExp(
   `^(\\d{1,2})${ORDINAL}\\s+(?:of\\s+)?([a-z]+)\\.?(?:,?\\s+(\\d{4}))?$`,
 )
 
+/**
+ * Drop a weekday that is only naming the same day the rest of the phrase already gives.
+ *
+ * People answer "which day?" the way they'd say it out loud — "sat jul 25th", "saturday july
+ * 25th" — and the weekday is context, not the answer. Left in place the phrase matches
+ * neither form: the weekday branch wants a bare weekday, and the month-and-day branch wants
+ * to start at the month.
+ *
+ * Only stripped when what follows is itself a date, so "last friday" and a bare "friday" are
+ * untouched. Where the two disagree — "monday july 25th", and the 25th is a Saturday — the
+ * explicit date wins, because a wrong weekday is a slip and a stated date is a decision.
+ */
+function stripLeadingWeekday(text: string): string {
+  const match = /^([a-z]+)\.?,?\s+(.+)$/.exec(text)
+  if (!match || !WEEKDAYS[match[1]!]) return text
+  const rest = match[2]!
+  const firstWord = rest.split(' ')[0]!
+  return /\d/.test(rest) || MONTHS[firstWord.replace(/\.$/, '')] ? rest : text
+}
+
 export function resolveDate(
   expression: string | null | undefined,
   options: { timeZone: string; now?: Date } = { timeZone: 'America/New_York' },
@@ -141,7 +161,11 @@ export function resolveDate(
   }
 
   const raw = expression.trim().toLowerCase().replace(/\s+/g, ' ')
-  const text = raw.replace(/^(on|last|this|the)\s+the\s+/, '$1 ')
+  let text = raw.replace(/^(on|last|this|the)\s+the\s+/, '$1 ')
+  // A leading preposition is never part of the date — "on sat jul 25th" is the same answer
+  // as "sat jul 25th". The weekday branch tolerated "on" already; nothing else did.
+  text = text.replace(/^on\s+/, '')
+  text = stripLeadingWeekday(text)
 
   const resolvedOrBlocked = (date: CivilDate): DateResolution =>
     compare(date, today) > 0

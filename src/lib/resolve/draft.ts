@@ -150,6 +150,10 @@ export function applyAnswer(
       case 'date':
         return {
           ...entry,
+          // Record what they actually typed, or a re-ask quotes the *original* wording —
+          // or, when the date was never in the first message, an empty string: "I couldn't
+          // work out the date from ''" was the live symptom of not doing this.
+          said: { ...entry.said, date: answer.value },
           date: resolveDate(answer.value, {
             timeZone: context.timezone,
             now: context.now,

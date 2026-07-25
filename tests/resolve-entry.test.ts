@@ -351,6 +351,20 @@ describe('applyAnswer', () => {
     expect(updated[0]!.date).toEqual({ status: 'resolved', date: '2026-07-24' })
   })
 
+  it('records the date they typed, so a re-ask quotes it back', () => {
+    // The live symptom of not doing this: the entry had no date in the first message, so
+    // `said.date` stayed null and a failed answer produced `I couldn't work out the date
+    // from ""` — quoting nothing, twice in a row.
+    const entries = resolveEntries([extracted({ date_expression: null })], context())
+    const updated = applyAnswer(
+      entries,
+      { entryId: 'e1', slot: 'date', value: 'the other day' },
+      context(),
+    )
+    expect(updated[0]!.said.date).toBe('the other day')
+    expect(updated[0]!.date).toEqual({ status: 'unresolved', reason: 'unrecognised' })
+  })
+
   it('accepts a date in the user’s own words, not just an ISO string', () => {
     const entries = resolveEntries([extracted({ date_expression: null })], context())
     const updated = applyAnswer(

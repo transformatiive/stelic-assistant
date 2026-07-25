@@ -179,6 +179,40 @@ describe('resolveDate', () => {
     it('does not mistake a plain weekday name for a month', () => {
       expect(onSat('friday')).toEqual({ status: 'resolved', date: '2026-07-24' })
     })
+
+    it('accepts the weekday said alongside the date, which is how people answer out loud', () => {
+      // The live field report: asked "which day?", the user answered "on sat jul 25th" and
+      // then "saturday july 25th". Both were unrecognised — the weekday made the phrase match
+      // neither the bare-weekday form nor the month-and-day form.
+      for (const said of [
+        'on sat jul 25th',
+        'saturday july 25th',
+        'sat jul 25',
+        'sat, jul 25',
+        'Saturday, July 25th, 2026',
+      ]) {
+        expect(onSat(said), said).toEqual({ status: 'resolved', date: '2026-07-25' })
+      }
+    })
+
+    it('lets the stated date win when the weekday beside it is wrong', () => {
+      // 25 July 2026 is a Saturday. Naming Monday is a slip; the explicit date is a decision.
+      expect(onSat('monday july 25th')).toEqual({
+        status: 'resolved',
+        date: '2026-07-25',
+      })
+    })
+
+    it('still reads a bare weekday as a weekday, with or without "on" or "last"', () => {
+      expect(onSat('on friday')).toEqual({ status: 'resolved', date: '2026-07-24' })
+      expect(onSat('last friday')).toEqual({ status: 'resolved', date: '2026-07-24' })
+      expect(onSat('sat')).toEqual({ status: 'resolved', date: '2026-07-25' })
+    })
+
+    it('drops a leading "on" for every date form, not only weekdays', () => {
+      expect(onSat('on 25 july')).toEqual({ status: 'resolved', date: '2026-07-25' })
+      expect(onSat('on 07/24')).toEqual({ status: 'resolved', date: '2026-07-24' })
+    })
   })
 
   it('resolves relative day and week counts', () => {
