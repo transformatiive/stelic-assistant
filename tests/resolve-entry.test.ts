@@ -8,14 +8,7 @@ import {
   resolveTypedTask,
   type ResolveContext,
 } from '@/lib/resolve/entry'
-import {
-  blockedReason,
-  entryState,
-  isDraftReady,
-  nextQuestion,
-  readyEntries,
-  SLOT_ORDER,
-} from '@/lib/resolve/slots'
+import { blockedReason, entryState } from '@/lib/resolve/slots'
 import { applyAnswer } from '@/lib/resolve/draft'
 
 const TODAY = '2026-07-25' // a Saturday
@@ -210,115 +203,28 @@ describe('resolveTask', () => {
   })
 })
 
-describe('nextQuestion', () => {
-  it('asks about the project before anything that depends on it', () => {
-    expect(SLOT_ORDER.indexOf('project')).toBeLessThan(SLOT_ORDER.indexOf('task'))
-
-    const entry = resolveEntry(
-      extracted({
-        project_query: 'zzz nothing like this',
-        hours: null,
-        description: null,
-      }),
-      context(),
-    )
-    expect(nextQuestion([entry])).toMatchObject({ entryId: entry.id, slot: 'project' })
-  })
-
-  it('offers the candidates as chips, hinted by client name', () => {
-    const ambiguous = resolveEntry(extracted({ project_query: 'google' }), context())
-    // "google" resolves cleanly here, so construct the ambiguous case directly.
-    const entry = {
-      ...ambiguous,
-      project: {
-        status: 'unresolved' as const,
-        reason: 'ambiguous' as const,
-        candidates: [
-          {
-            projectId: 'p-clayco',
-            projectName: 'Clayco EKI',
-            accountName: 'Clayco Construction Company Inc',
-            matchedText: 'clayco',
-          },
-        ],
-      },
-    }
-    const question = nextQuestion([entry])
-    expect(question?.chips).toEqual([
-      {
-        value: 'p-clayco',
-        label: 'Clayco EKI',
-        hint: 'Clayco Construction Company Inc',
-      },
-    ])
-  })
-
-  it('never puts a rate on a chip, only the tasklist', () => {
-    const entry = resolveEntry(extracted({ project_query: 'clayco' }), context())
-    const question = nextQuestion([entry])
-    expect(question?.slot).toBe('task')
-    expect(question?.chips).toEqual([
-      { value: 't-sched', label: 'Scheduler', hint: 'Controls' },
-      { value: 't-pm', label: 'Project Manager', hint: 'Controls' },
-    ])
-    expect(JSON.stringify(question?.chips)).not.toMatch(/rate|\$|usd/i)
-  })
-
-  it('offers no chips where there is no finite candidate set', () => {
+describe('entryState', () => {
+  it('calls an entry that still needs an answer needs_answer', () => {
     const entry = resolveEntry(
       extracted({ charge_code_hint: 'scheduler', hours: null }),
       context(),
     )
-    expect(nextQuestion([entry])).toMatchObject({ slot: 'hours', chips: [] })
+    expect(entryState(entry)).toBe('needs_answer')
   })
 
-  it('finishes one entry before moving to the next', () => {
-    const entries = resolveEntries(
-      [
-        extracted({ charge_code_hint: 'scheduler', hours: null, description: null }),
-        extracted({ charge_code_hint: 'scheduler', date_expression: null }),
-      ],
+  it('calls a fully resolved entry ready', () => {
+    const entry = resolveEntry(extracted({ charge_code_hint: 'scheduler' }), context())
+    expect(entryState(entry)).toBe('ready')
+  })
+
+  it('calls an entry blocked even when something else is also unresolved', () => {
+    // Blocked outranks needs_answer: there is no answer that makes a future date loggable,
+    // so asking about the missing hours first would be asking a pointless question.
+    const entry = resolveEntry(
+      extracted({ date_expression: '2026-12-01', hours: null }),
       context(),
     )
-    // Entry 1 needs hours and a description; entry 2 needs a date. Ask entry 1 first.
-    expect(nextQuestion(entries)).toMatchObject({ entryId: 'e1', slot: 'hours' })
-  })
-
-  it('skips a blocked entry rather than asking an unanswerable question', () => {
-    const entries = resolveEntries(
-      [
-        extracted({ date_expression: '2026-12-01' }),
-        extracted({ charge_code_hint: 'scheduler', hours: null }),
-      ],
-      context(),
-    )
-    expect(entryState(entries[0]!)).toBe('blocked')
-    expect(nextQuestion(entries)).toMatchObject({ entryId: 'e2', slot: 'hours' })
-  })
-
-  it('returns nothing when the draft is ready', () => {
-    const entries = resolveEntries(
-      [extracted({ charge_code_hint: 'scheduler' })],
-      context(),
-    )
-    expect(nextQuestion(entries)).toBeNull()
-    expect(isDraftReady(entries)).toBe(true)
-  })
-
-  it('does not call an empty draft ready', () => {
-    expect(isDraftReady([])).toBe(false)
-  })
-
-  it('a blocked entry keeps the draft from being ready but does not stop the others', () => {
-    const entries = resolveEntries(
-      [
-        extracted({ date_expression: '2026-12-01', charge_code_hint: 'scheduler' }),
-        extracted({ charge_code_hint: 'scheduler' }),
-      ],
-      context(),
-    )
-    expect(isDraftReady(entries)).toBe(false)
-    expect(readyEntries(entries).map((e) => e.id)).toEqual(['e2'])
+    expect(entryState(entry)).toBe('blocked')
   })
 })
 
