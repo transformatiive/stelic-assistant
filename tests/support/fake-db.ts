@@ -422,7 +422,12 @@ export class FakeDb {
       where,
       take,
     }: {
-      where: { userId: string; status: string; completedAt?: { gte: Date } }
+      where: {
+        userId: string
+        status: string
+        completedAt?: { gte: Date }
+        logDate?: { in: Date[] }
+      }
       take?: number
     }) =>
       this.commitLogs
@@ -431,7 +436,11 @@ export class FakeDb {
             r.userId === where.userId &&
             r.status === where.status &&
             (where.completedAt === undefined ||
-              (r.completedAt != null && r.completedAt >= where.completedAt.gte)),
+              (r.completedAt != null && r.completedAt >= where.completedAt.gte)) &&
+            // Compared by instant, not by identity: the caller builds fresh Date objects
+            // from `YYYY-MM-DD`, so `includes` on the Date itself would never match.
+            (where.logDate === undefined ||
+              where.logDate.in.some((d) => d.getTime() === r.logDate.getTime())),
         )
         .sort((a, b) => (b.completedAt?.getTime() ?? 0) - (a.completedAt?.getTime() ?? 0))
         .slice(0, take ?? undefined),

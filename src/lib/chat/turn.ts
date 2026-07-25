@@ -9,9 +9,9 @@ import { windowConversation, type ChatMessage } from '@/lib/extract/prompt'
 import { usageColumns } from '@/lib/extract/usage'
 import { buildAgentPrompt, type Agent } from './agent'
 import { loadChargeCodes, loadProjectIndex } from '@/lib/index/store'
-import { todayFor, type ResolveContext } from '@/lib/resolve/entry'
+import { todayFor, type DraftEntry, type ResolveContext } from '@/lib/resolve/entry'
 import { saveDraft } from '@/lib/resolve/draft'
-import { warningsForDraft } from '@/lib/resolve/warnings'
+import { warningsForDraft, type ExistingLog } from '@/lib/resolve/warnings'
 import { log } from '@/lib/observability/log'
 import { checkScope } from './scope'
 import { toCardEntry, totalHours, type ChatUi, type UndoCandidate } from './ui'
@@ -154,6 +154,7 @@ export async function runChatTurn(
   const warnings = warningsForDraft(outcome.entries, {
     today: todayFor(context),
     backdateWarnDays: input.backdateWarnDays,
+    existingLogs: await alreadyLoggedOn(db, input.userId, outcome.entries),
   })
   const ui: ChatUi = {
     kind: 'confirmation',
@@ -174,6 +175,60 @@ export async function runChatTurn(
     ui,
   )
   return { conversationId, messageId: assistant.id, reply: outcome.message, ui }
+}
+
+/**
+ * What this user has already logged on the days this draft covers.
+ *
+ * Without it `warningsForDraft` compares every entry against an empty list, so the
+ * possible-duplicate warning could never fire however many times somebody re-sent the same
+ * sentence — the code existed and was unit-tested, but nothing ever handed it the one input
+ * it needed.
+ *
+ * Read from our own `CommitLog` rather than from Zoho. The duplicate this catches is almost
+ * always a person re-submitting the same turn, and a per-task Zoho read would spend the
+ * 100-calls-per-120-seconds budget on a check that runs before *every* confirmation card.
+ * The cost is that hours logged in Zoho's own UI are invisible here: this misses some
+ * duplicates, but it never warns about one that is not there.
+ */
+async function alreadyLoggedOn(
+  db: PrismaClient,
+  userId: string,
+  entries: readonly DraftEntry[],
+): Promise<ExistingLog[]> {
+  const dates = [
+    ...new Set(
+      entries.flatMap((entry) =>
+        entry.date.status === 'resolved' ? [entry.date.date] : [],
+      ),
+    ),
+  ]
+  if (dates.length === 0) return []
+
+  const rows = await db.commitLog.findMany({
+    where: {
+      userId,
+      status: 'success',
+      // Matches the `@@index([userId, logDate])`, and `log_date` is a DATE column, so these
+      // are the same UTC midnights `commit.ts` writes.
+      logDate: { in: dates.map((date) => new Date(`${date}T00:00:00.000Z`)) },
+    },
+    select: {
+      id: true,
+      projectId: true,
+      taskId: true,
+      logDate: true,
+      description: true,
+    },
+  })
+
+  return rows.map((row) => ({
+    logId: row.id,
+    projectId: row.projectId,
+    taskId: row.taskId,
+    date: row.logDate.toISOString().slice(0, 10),
+    description: row.description,
+  }))
 }
 
 /** What a conversational reply should put on screen alongside the sentence. */

@@ -60,7 +60,7 @@ describe('warmCrmUserId', () => {
       zohoUserId: '917530087',
       crmUserId: '7217638000002090001',
     })
-    const fetch = vi.fn<typeof fetch>()
+    const fetchImpl = vi.fn<typeof fetch>()
     const crm = new ZohoClient({
       baseUrl: 'https://www.zohoapis.com/crm/v8/',
       tokens: {
@@ -68,14 +68,14 @@ describe('warmCrmUserId', () => {
         getAccessToken: async () => 'at',
         refreshAccessToken: async () => 'at',
       },
-      fetchImpl: fetch,
+      fetchImpl,
       maxRateLimitRetries: 0,
     })
 
     await warmCrmUserId(db.client, crm, user)
 
     // Short-circuits: the CRM is never called when the id is already known.
-    expect(fetch).not.toHaveBeenCalled()
+    expect(fetchImpl).not.toHaveBeenCalled()
   })
 
   it('tolerates a CRM failure without throwing — warming is best-effort', async () => {
