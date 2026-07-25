@@ -40,6 +40,27 @@ export type SessionRow = {
   revokedAt: Date | null
 }
 
+export type ProjectIndexRow = {
+  userId: string
+  projectId: string
+  projectName: string
+  projectIdString: string | null
+  crmDealId: string | null
+  dealName: string | null
+  accountName: string | null
+  aliases: string[]
+  chargeCodes: unknown
+  lastLoggedAt: Date | null
+  refreshedAt: Date
+}
+
+export type CommitLogRow = {
+  userId: string
+  projectId: string
+  status: string
+  logDate: Date
+}
+
 export type ServiceTokenRow = {
   id: string
   accessTokenEncrypted: string
@@ -51,6 +72,8 @@ export class FakeDb {
   tokens: TokenRow[] = []
   sessions: SessionRow[] = []
   serviceTokens: ServiceTokenRow[] = []
+  projectIndexes: ProjectIndexRow[] = []
+  commitLogs: CommitLogRow[] = []
   private nextId = 1
 
   seedUser(overrides: Partial<UserRow> = {}): UserRow {
@@ -215,6 +238,90 @@ export class FakeDb {
           (where.revokedAt !== null || s.revokedAt === null) &&
           (where.expiresAt === undefined || s.expiresAt > where.expiresAt.gt),
       ).length,
+  }
+
+  readonly projectIndex = {
+    upsert: async ({
+      where,
+      create,
+      update,
+    }: {
+      where: { userId_projectId: { userId: string; projectId: string } }
+      create: ProjectIndexRow
+      update: Partial<ProjectIndexRow>
+    }) => {
+      const { userId, projectId } = where.userId_projectId
+      const existing = this.projectIndexes.find(
+        (r) => r.userId === userId && r.projectId === projectId,
+      )
+      if (existing) Object.assign(existing, update)
+      else
+        this.projectIndexes.push({ ...create, lastLoggedAt: create.lastLoggedAt ?? null })
+      return {}
+    },
+
+    deleteMany: async ({
+      where,
+    }: {
+      where: { userId: string; projectId?: { notIn: string[] } }
+    }) => {
+      const before = this.projectIndexes.length
+      this.projectIndexes = this.projectIndexes.filter(
+        (r) =>
+          r.userId !== where.userId ||
+          (where.projectId !== undefined && where.projectId.notIn.includes(r.projectId)),
+      )
+      return { count: before - this.projectIndexes.length }
+    },
+
+    updateMany: async ({
+      where,
+      data,
+    }: {
+      where: { userId: string; projectId: string }
+      data: Partial<ProjectIndexRow>
+    }) => {
+      const matched = this.projectIndexes.filter(
+        (r) => r.userId === where.userId && r.projectId === where.projectId,
+      )
+      matched.forEach((r) => Object.assign(r, data))
+      return { count: matched.length }
+    },
+
+    findMany: async ({ where }: { where: { userId: string } }) =>
+      this.projectIndexes.filter((r) => r.userId === where.userId),
+
+    findFirst: async ({ where }: { where: { userId: string } }) =>
+      this.projectIndexes
+        .filter((r) => r.userId === where.userId)
+        .sort((a, b) => b.refreshedAt.getTime() - a.refreshedAt.getTime())[0] ?? null,
+
+    count: async ({ where }: { where: { userId: string } }) =>
+      this.projectIndexes.filter((r) => r.userId === where.userId).length,
+  }
+
+  readonly commitLog = {
+    groupBy: async ({
+      where,
+    }: {
+      where: { userId: string; status: string; logDate: { gte: Date } }
+    }) => {
+      const matched = this.commitLogs.filter(
+        (r) =>
+          r.userId === where.userId &&
+          r.status === where.status &&
+          r.logDate >= where.logDate.gte,
+      )
+      const byProject = new Map<string, Date>()
+      for (const row of matched) {
+        const current = byProject.get(row.projectId)
+        if (!current || row.logDate > current) byProject.set(row.projectId, row.logDate)
+      }
+      return [...byProject].map(([projectId, logDate]) => ({
+        projectId,
+        _max: { logDate },
+      }))
+    },
   }
 
   readonly serviceToken = {
