@@ -17,12 +17,15 @@
  * Takes minutes, on purpose. The pacing between Zoho calls is what keeps the portal from
  * locking us out for a quarter of an hour, and a faster script would simply fail.
  */
-const baseUrl = (process.env.BASE_URL ?? '').replace(/\/$/, '')
+// APP_URL is accepted as well as BASE_URL because the scheduled container runs this same
+// script, and that service already names the app's address APP_URL. Two names for one thing
+// beats a rebuild that exits 1 twice a day because the obvious-looking variable was set.
+const baseUrl = (process.env.BASE_URL ?? process.env.APP_URL ?? '').replace(/\/$/, '')
 const secret = process.env.CRON_SECRET
 
 if (!baseUrl || !secret) {
   console.error(
-    'warm-index: BASE_URL and CRON_SECRET are both required.\n' +
+    'warm-index: BASE_URL (or APP_URL) and CRON_SECRET are both required.\n' +
       '  BASE_URL=https://stelic-assistant-production.up.railway.app \\\n' +
       '  CRON_SECRET=… node scripts/warm-index.mjs',
   )
