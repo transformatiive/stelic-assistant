@@ -60,3 +60,18 @@ describe('proxy (route middleware)', () => {
     expect(proxy(request('/api/chat', 'stelic_session=forged')).status).toBe(200)
   })
 })
+
+describe('the scheduler has no session', () => {
+  it('lets the cron route through, because it authenticates itself', () => {
+    // Caught live: the proxy answered 401 before the route ran, so the schedule could never
+    // have worked. The route checks a bearer secret and refuses to run without one
+    // configured — it is session-free, not unauthenticated.
+    expect(proxy(request('/api/cron/refresh-index')).status).toBe(200)
+  })
+
+  it('still refuses every other API route without a cookie', () => {
+    for (const path of ['/api/chat', '/api/index/refresh', '/api/admin/zoho/connect']) {
+      expect(proxy(request(path)).status).toBe(401)
+    }
+  })
+})
