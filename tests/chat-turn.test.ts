@@ -367,3 +367,90 @@ describe('the conversation window', () => {
     expect(db.conversations).toHaveLength(2)
   })
 })
+
+describe('the possible-duplicate warning', () => {
+  /** A successful commit by this user, as the commit pipeline would have left it. */
+  function alreadyLogged(db: FakeDb, over: { description: string; date?: string }) {
+    db.commitLogs.push({
+      id: 'commit_prior',
+      userId: 'user_1',
+      status: 'success',
+      projectId: '2620762000000790022',
+      taskId: 'task_1',
+      logDate: new Date(`${over.date ?? '2026-07-21'}T00:00:00.000Z`),
+      description: over.description,
+    })
+  }
+
+  async function cardFor(db: FakeDb) {
+    const result = await runChatTurn(
+      db.client,
+      agentReturning({ kind: 'propose', message: 'ok', entries: [readyEntry] }),
+      { ...turnInput, message: '8h clayco yesterday, structural review' },
+    )
+    return result.ui as Extract<ChatUi, { kind: 'confirmation' }>
+  }
+
+  it('fires when the same work is already logged on that task and day', async () => {
+    // The regression this exists for: `warningsForDraft` used to be called with no existing
+    // logs at all, so re-sending the same sentence produced a clean card every time.
+    const db = new FakeDb()
+    seedIndex(db)
+    alreadyLogged(db, { description: 'Structural review' })
+
+    const ui = await cardFor(db)
+    expect(ui.entries[0]!.warnings).toContainEqual(
+      expect.objectContaining({
+        kind: 'possible_duplicate',
+        existingLogId: 'commit_prior',
+      }),
+    )
+  })
+
+  it('stays quiet when the day’s other entry is genuinely different work', async () => {
+    // Two entries on one task in a day is normal — mornings and afternoons differ.
+    const db = new FakeDb()
+    seedIndex(db)
+    alreadyLogged(db, { description: 'Site walk with the client and photo survey' })
+
+    const ui = await cardFor(db)
+    expect(ui.entries[0]!.warnings).toEqual([])
+  })
+
+  it('stays quiet when the identical work was logged on a different day', async () => {
+    const db = new FakeDb()
+    seedIndex(db)
+    alreadyLogged(db, { description: 'Structural review', date: '2026-07-20' })
+
+    const ui = await cardFor(db)
+    expect(ui.entries[0]!.warnings).toEqual([])
+  })
+
+  it('ignores a commit that failed, since those hours never reached Zoho', async () => {
+    const db = new FakeDb()
+    seedIndex(db)
+    db.commitLogs.push({
+      id: 'commit_failed',
+      userId: 'user_1',
+      status: 'failed',
+      projectId: '2620762000000790022',
+      taskId: 'task_1',
+      logDate: new Date('2026-07-21T00:00:00.000Z'),
+      description: 'Structural review',
+    })
+
+    const ui = await cardFor(db)
+    expect(ui.entries[0]!.warnings).toEqual([])
+  })
+
+  it('reads no commit log at all when nothing is proposed', async () => {
+    const db = new FakeDb()
+    seedIndex(db)
+    const result = await runChatTurn(
+      db.client,
+      agentReturning({ kind: 'ask', message: 'Which project?', options: [] }),
+      { ...turnInput, message: '8 hours yesterday' },
+    )
+    expect(result.ui.kind).toBe('question')
+  })
+})
