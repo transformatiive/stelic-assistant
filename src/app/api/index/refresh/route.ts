@@ -16,7 +16,7 @@ import { isIndexStale } from '@/lib/index/store'
  */
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
-export const maxDuration = 300
+export const maxDuration = 800
 
 export async function GET(request: Request): Promise<NextResponse> {
   const session = await requireApiSession(request)

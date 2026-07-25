@@ -102,6 +102,23 @@ export function toChargeCodes(tasks: readonly ZohoTask[]): ChargeCode[] {
   )
 }
 
+/**
+ * Zoho allows 100 requests per 120 seconds on this portal (design §5).
+ *
+ * A rebuild is 1 + N calls and blows straight through that: the live run made 100 successful
+ * task reads and then 45 failures — and, crucially, **as plain 400s rather than 429s**, so the
+ * client's backoff never fired. Pacing is therefore the only defence; retrying is not one.
+ *
+ * The interval carries a margin because the window is not ours to observe precisely, and
+ * because the projects and CRM calls at the start of a build spend from the same budget.
+ */
+export const ZOHO_CALLS_PER_WINDOW = 100
+export const ZOHO_WINDOW_MS = 120_000
+export const PACE_MS = Math.ceil((ZOHO_WINDOW_MS / ZOHO_CALLS_PER_WINDOW) * 1.15)
+
+const defaultSleep = (ms: number) =>
+  new Promise<void>((resolve) => setTimeout(resolve, ms))
+
 export type BuildOptions = {
   /**
    * Cap on how many projects get their tasks fetched. Each is one call against a
@@ -112,6 +129,9 @@ export type BuildOptions = {
   onProgress?: (done: number, total: number) => void
   /** Called per project whose task list could not be read, so the failure is not silent. */
   onTaskFailure?: (project: ZohoProject, error: unknown) => void
+  /** Milliseconds between task reads. Zero disables pacing; the tests rely on that. */
+  paceMs?: number
+  sleep?: (ms: number) => Promise<void>
 }
 
 export type BuildResult = {
@@ -154,6 +174,8 @@ export async function buildProjectIndex(
     crmFailure = error instanceof Error ? error.name : 'unknown'
   }
 
+  const pace = options.paceMs ?? PACE_MS
+  const sleep = options.sleep ?? defaultSleep
   const limit = options.maxProjectsWithTasks ?? projects.length
   const rows: IndexedProjectRow[] = []
   let tasksFetched = 0
@@ -164,6 +186,9 @@ export async function buildProjectIndex(
 
     let chargeCodes: ChargeCode[] = []
     if (position < limit) {
+      // Paced, not retried: a spent quota comes back as a 400 here, which no backoff can
+      // recognise. Waiting before the call is the only thing that keeps the budget intact.
+      if (position > 0 && pace > 0) await sleep(pace)
       try {
         chargeCodes = toChargeCodes(await listTasks(clients.projects, project.id))
         tasksFetched += 1

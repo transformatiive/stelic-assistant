@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 import { ZohoClient } from '@/lib/zoho/client'
 import {
+  PACE_MS,
+  ZOHO_CALLS_PER_WINDOW,
+  ZOHO_WINDOW_MS,
   aliasesFor,
   buildProjectIndex,
   isLoggable,
@@ -154,7 +157,7 @@ describe('buildProjectIndex', () => {
 
   it('indexes the loggable projects and enriches them from CRM', async () => {
     const { clients } = portal(routes)
-    const { rows, stats } = await buildProjectIndex(clients)
+    const { rows, stats } = await buildProjectIndex(clients, { paceMs: 0 })
 
     expect(rows.map((r) => r.projectId)).toEqual(['p1', 'p3'])
     expect(stats).toMatchObject({ projectsSeen: 3, projectsIndexed: 2, dealsResolved: 1 })
@@ -169,19 +172,19 @@ describe('buildProjectIndex', () => {
 
   it('never fetches tasks for a closed project', async () => {
     const { clients, seen } = portal(routes)
-    await buildProjectIndex(clients)
+    await buildProjectIndex(clients, { paceMs: 0 })
     expect(seen.some((u) => u.includes('/projects/p2/tasks/'))).toBe(false)
   })
 
   it('asks CRM once for every deal, not once per project', async () => {
     const { clients, seen } = portal(routes)
-    await buildProjectIndex(clients)
+    await buildProjectIndex(clients, { paceMs: 0 })
     expect(seen.filter((u) => u.includes('crm/v8/Deals'))).toHaveLength(1)
   })
 
   it('leaves a project with no deal unenriched rather than blank-named', async () => {
     const { clients } = portal(routes)
-    const { rows } = await buildProjectIndex(clients)
+    const { rows } = await buildProjectIndex(clients, { paceMs: 0 })
     const internal = rows.find((r) => r.projectId === 'p3')!
     expect(internal.crmDealId).toBeNull()
     expect(internal.accountName).toBeNull()
@@ -191,7 +194,7 @@ describe('buildProjectIndex', () => {
   it('still indexes a project whose deal CRM does not return', async () => {
     // d2 belongs to the closed project, so nothing here resolves — the row must survive.
     const { clients } = portal({ ...routes, 'crm/v8/Deals': { data: [] } })
-    const { rows, stats } = await buildProjectIndex(clients)
+    const { rows, stats } = await buildProjectIndex(clients, { paceMs: 0 })
     expect(rows).toHaveLength(2)
     expect(stats.dealsResolved).toBe(0)
     expect(rows[0]!.dealName).toBeNull()
@@ -199,7 +202,10 @@ describe('buildProjectIndex', () => {
 
   it('honours the task-fetch cap, because tasks are one call each against a 100/120s limit', async () => {
     const { clients, seen } = portal(routes)
-    const { rows, stats } = await buildProjectIndex(clients, { maxProjectsWithTasks: 1 })
+    const { rows, stats } = await buildProjectIndex(clients, {
+      maxProjectsWithTasks: 1,
+      paceMs: 0,
+    })
 
     expect(stats.projectsWithTasksFetched).toBe(1)
     expect(seen.some((u) => u.includes('/projects/p3/tasks/'))).toBe(false)
@@ -211,7 +217,10 @@ describe('buildProjectIndex', () => {
   it('reports progress so a long rebuild is observable', async () => {
     const { clients } = portal(routes)
     const seenProgress: number[] = []
-    await buildProjectIndex(clients, { onProgress: (done) => seenProgress.push(done) })
+    await buildProjectIndex(clients, {
+      paceMs: 0,
+      onProgress: (done) => seenProgress.push(done),
+    })
     expect(seenProgress).toEqual([1, 2])
   })
 })
@@ -249,7 +258,7 @@ describe('a portal where the client name rides on the project', () => {
 
   it('names the client from the project, with no CRM call needed', async () => {
     const { clients } = portal(LIVE_ROUTES)
-    const { rows, stats } = await buildProjectIndex(clients)
+    const { rows, stats } = await buildProjectIndex(clients, { paceMs: 0 })
 
     expect(rows[0]!.accountName).toBe('Google LLC')
     expect(rows[1]!.accountName).toBe('Clayco Construction Company Inc')
@@ -269,7 +278,7 @@ describe('a portal where the client name rides on the project', () => {
         },
       } as unknown as (typeof clients)['crm'],
     }
-    const { rows, stats } = await buildProjectIndex(failing)
+    const { rows, stats } = await buildProjectIndex(failing, { paceMs: 0 })
 
     expect(rows).toHaveLength(2)
     expect(rows[0]!.accountName).toBe('Google LLC')
@@ -278,7 +287,7 @@ describe('a portal where the client name rides on the project', () => {
 
   it('makes the long client name matchable by the short one people say', async () => {
     const { clients } = portal(LIVE_ROUTES)
-    const { rows } = await buildProjectIndex(clients)
+    const { rows } = await buildProjectIndex(clients, { paceMs: 0 })
 
     // Nobody types "Clayco Construction Company Inc".
     const index = rows.map((r) => ({
@@ -296,7 +305,7 @@ describe('a portal where the client name rides on the project', () => {
 
   it('uses id_string even though every live numeric id is corrupted', async () => {
     const { clients } = portal(LIVE_ROUTES)
-    const { rows } = await buildProjectIndex(clients)
+    const { rows } = await buildProjectIndex(clients, { paceMs: 0 })
     expect(rows[0]!.projectId).toBe('2620762000000790022')
   })
 })
@@ -339,7 +348,7 @@ describe('one unreadable project does not lose the rest', () => {
   }
 
   it('indexes every project, including the one whose tasks failed', async () => {
-    const { rows, stats } = await buildProjectIndex(portalWithBadProject())
+    const { rows, stats } = await buildProjectIndex(portalWithBadProject(), { paceMs: 0 })
 
     expect(rows.map((r) => r.projectId)).toEqual(['p-good', 'p-bad', 'p-also-good'])
     expect(stats.projectsWithTaskFailures).toBe(1)
@@ -347,7 +356,7 @@ describe('one unreadable project does not lose the rest', () => {
   })
 
   it('leaves the failed project matchable, just without charge codes', async () => {
-    const { rows } = await buildProjectIndex(portalWithBadProject())
+    const { rows } = await buildProjectIndex(portalWithBadProject(), { paceMs: 0 })
     const bad = rows.find((r) => r.projectId === 'p-bad')!
     expect(bad.projectName).toBe('Bad')
     expect(bad.chargeCodes).toEqual([])
@@ -356,8 +365,58 @@ describe('one unreadable project does not lose the rest', () => {
   it('does not fail silently — the caller is told which project', async () => {
     const failures: string[] = []
     await buildProjectIndex(portalWithBadProject(), {
+      paceMs: 0,
       onTaskFailure: (project) => failures.push(project.id),
     })
     expect(failures).toEqual(['p-bad'])
+  })
+})
+
+describe('pacing, because a spent quota is not a 429', () => {
+  // The live rebuild made exactly 100 successful task reads and then 45 failures — and they
+  // came back as plain 400s, so the client's 429 backoff never fired. Waiting before the call
+  // is the only defence; retrying is not one.
+  const ROUTES = {
+    '/projects/?': {
+      projects: [
+        { id_string: 'p1', name: 'One', status: 'active' },
+        { id_string: 'p2', name: 'Two', status: 'active' },
+        { id_string: 'p3', name: 'Three', status: 'active' },
+      ],
+    },
+    '/projects/p1/tasks/': { tasks: [] },
+    '/projects/p2/tasks/': { tasks: [] },
+    '/projects/p3/tasks/': { tasks: [] },
+    'crm/v8/Deals': { data: [] },
+  }
+
+  it('waits between task reads, but not before the first', async () => {
+    const waits: number[] = []
+    await buildProjectIndex(portal(ROUTES).clients, {
+      paceMs: 1200,
+      sleep: async (ms) => {
+        waits.push(ms)
+      },
+    })
+    // Three projects, two gaps.
+    expect(waits).toEqual([1200, 1200])
+  })
+
+  it('paces slower than the documented budget allows, not exactly at it', () => {
+    // 100 calls per 120s is 1200ms; the margin covers the projects and CRM calls at the
+    // start of a build, which spend from the same budget.
+    expect(PACE_MS).toBeGreaterThan(ZOHO_WINDOW_MS / ZOHO_CALLS_PER_WINDOW)
+  })
+
+  it('does not wait for projects it is not fetching tasks for', async () => {
+    const waits: number[] = []
+    await buildProjectIndex(portal(ROUTES).clients, {
+      paceMs: 1200,
+      maxProjectsWithTasks: 1,
+      sleep: async (ms) => {
+        waits.push(ms)
+      },
+    })
+    expect(waits).toEqual([])
   })
 })
