@@ -16,7 +16,13 @@ import { NextResponse, type NextRequest } from 'next/server'
  */
 
 const PUBLIC_PATHS = ['/login']
-const PUBLIC_PREFIXES = ['/api/auth/', '/_next/', '/icons/']
+/**
+ * `/api/cron/` is public *to the proxy* because it carries no session — a scheduler has none.
+ * It is not unauthenticated: the route checks a bearer secret in constant time and refuses to
+ * run at all when one is not configured. Leaving it out of this list meant the proxy answered
+ * 401 before the route ever ran, so the schedule could never have worked.
+ */
+const PUBLIC_PREFIXES = ['/api/auth/', '/api/cron/', '/_next/', '/icons/']
 const PUBLIC_FILES = ['/manifest.webmanifest', '/favicon.ico', '/robots.txt', '/sw.js']
 
 // Read directly: this runs in the edge runtime, where `loadConfig` (and the Node
