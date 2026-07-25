@@ -9,6 +9,7 @@ import { serviceCredentialState } from '@/lib/auth/service-connect'
 import { IndexWarmer } from './index-warmer'
 import { ServiceCredentialBanner } from './service-credential'
 import { SignOutButton } from './sign-out-button'
+import { TimezoneSync } from './timezone-sync'
 
 /**
  * The signed-in shell. The chat surface itself is task group 8; what exists here now is the
@@ -42,6 +43,8 @@ export default async function Home({
 
   return (
     <main className="mx-auto flex min-h-dvh max-w-md flex-col gap-6 p-6">
+      <TimezoneSync stored={user.timezone} />
+
       <header className="flex items-start justify-between gap-4">
         <div className="flex items-center gap-3">
           <StelicMark size={36} />
