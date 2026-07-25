@@ -114,6 +114,13 @@ export type DraftRow = {
   expiresAt: Date
 }
 
+export type RateLimitRow = {
+  userId: string
+  bucket: string
+  windowStartedAt: Date
+  count: number
+}
+
 export type MessageRow = {
   id: string
   conversationId: string
@@ -131,6 +138,7 @@ export class FakeDb {
   commitLogs: CommitLogRow[] = []
   drafts: DraftRow[] = []
   messages: MessageRow[] = []
+  rateLimits: RateLimitRow[] = []
   private nextId = 1
 
   seedUser(overrides: Partial<UserRow> = {}): UserRow {
@@ -464,6 +472,46 @@ export class FakeDb {
       const row = this.drafts.find((d) => d.id === where.id)!
       Object.assign(row, data)
       return row
+    },
+  }
+
+  readonly rateLimit = {
+    upsert: async ({
+      where,
+      create,
+      update,
+    }: {
+      where: {
+        userId_bucket_windowStartedAt: {
+          userId: string
+          bucket: string
+          windowStartedAt: Date
+        }
+      }
+      create: RateLimitRow
+      update: { count: { increment: number } }
+    }) => {
+      const key = where.userId_bucket_windowStartedAt
+      const existing = this.rateLimits.find(
+        (r) =>
+          r.userId === key.userId &&
+          r.bucket === key.bucket &&
+          r.windowStartedAt.getTime() === key.windowStartedAt.getTime(),
+      )
+      if (existing) {
+        existing.count += update.count.increment
+        return { count: existing.count }
+      }
+      this.rateLimits.push({ ...create })
+      return { count: create.count }
+    },
+
+    deleteMany: async ({ where }: { where: { windowStartedAt: { lt: Date } } }) => {
+      const before = this.rateLimits.length
+      this.rateLimits = this.rateLimits.filter(
+        (r) => r.windowStartedAt >= where.windowStartedAt.lt,
+      )
+      return { count: before - this.rateLimits.length }
     },
   }
 

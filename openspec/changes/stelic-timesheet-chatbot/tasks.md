@@ -503,9 +503,19 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
       `{ reply, ui }`
 - [ ] 7.2 `/api/chat/action` for chip taps: apply typed slot value, no LLM round trip
 - [ ] 7.3 Stale-action guard (pwa-shell spec: *Stale options*)
-- [ ] 7.4 Per-user rate limiting; 30 chat requests/minute
-- [ ] 7.5 Out-of-scope guard: refuse rate, budget, invoice, approval and admin requests
-- [ ] 7.6 `/api/me`
+- [x] 7.4 Per-user rate limiting; 30 chat requests/minute — a fixed window, one row and one
+      atomic increment, checked **before** the model call. The thing being protected is the
+      model spend, not the server: counting afterwards would mean a user at the limit still
+      pays for the request that tells them they are at the limit
+- [x] 7.5 Out-of-scope guard: refuse rate, budget, invoice, approval and admin requests
+      — **a keyword list alone would have been wrong.** "6h on Clayco for the budget review"
+      is an ordinary time entry, and refusing it would block real work daily. So the test is
+      a sensitive topic *and* the shape of a question; a message stating a duration is never
+      refused. The real guarantee is that no code path in this app fetches a rate, a budget
+      or an approval at all — this is the courteous front door on that absence
+- [x] 7.6 `/api/me` — identity and index readiness in one call, so a returning user goes
+      straight to the chat without a flash of the wrong state. No Zoho identifiers in the
+      response; the email is there because a person needs to see which account they are on
 
 ## 8. PWA and chat UI
 
