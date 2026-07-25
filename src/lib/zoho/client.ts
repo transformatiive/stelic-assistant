@@ -121,6 +121,34 @@ export class ZohoClient {
         continue
       }
 
+      // Zoho signals a spent quota as **400**, not 429, with a distinctive title and a
+      // `retry-after` measured in *minutes*:
+      //
+      //   { "error": { "status_code": 400,
+      //                "title": "URL_ROLLING_THROTTLES_LIMIT_EXCEEDED",
+      //                "details": { "message": "Cannot execute more than 100 requests per
+      //                             API in 2 minutes. Try again after 17 minutes." } } }
+      //
+      // Verified live. Read as a generic HTTP error it looks like a bad request, which is
+      // what sent two rounds of debugging after the wrong cause. And it must not be retried
+      // in-request: the lockout is a quarter of an hour, and each further call sustains it.
+      if (response.status === 400) {
+        const peeked = await response.clone().text()
+        if (isThrottled(peeked)) {
+          const retryAfter = response.headers.get('retry-after')
+          this.logger.warn('zoho.throttled', {
+            requestId,
+            method,
+            path,
+            retryAfterSeconds: retryAfter,
+            mode: this.mode,
+          })
+          throw new ZohoRateLimitError(rateLimitAttempts, requestId, {
+            retryAfterSeconds: retryAfter ? Number(retryAfter) : undefined,
+          })
+        }
+      }
+
       if (response.status === 429) {
         if (rateLimitAttempts >= this.maxRateLimitRetries) {
           this.logger.warn('zoho.rate_limited', {
@@ -188,18 +216,31 @@ export class ZohoClient {
   }
 }
 
-/** Zoho wraps failures as `{"code":6401,"message":"…"}`. The code is safe to log; the message may not be. */
-function zohoErrorCode(body: string): number | null {
+/**
+ * Zoho has (at least) two error shapes: `{"code":6401,"message":"…"}` and a nested
+ * `{"error":{"status_code":400,"title":"…"}}`. Reading only the first is why a throttle
+ * response logged `zohoCode: null` and looked like an ordinary bad request.
+ *
+ * The code and title are safe to log. The message is not — it can name a project.
+ */
+function zohoErrorCode(body: string): number | string | null {
   try {
-    const parsed: unknown = JSON.parse(body)
-    if (parsed && typeof parsed === 'object' && 'code' in parsed) {
-      const code = (parsed as { code: unknown }).code
-      return typeof code === 'number' ? code : null
+    const parsed = JSON.parse(body) as {
+      code?: unknown
+      error?: { status_code?: unknown; title?: unknown }
     }
+    if (typeof parsed?.code === 'number') return parsed.code
+    if (typeof parsed?.error?.title === 'string') return parsed.error.title
+    if (typeof parsed?.error?.status_code === 'number') return parsed.error.status_code
   } catch {
     // Not JSON. Nothing to report beyond the status.
   }
   return null
+}
+
+/** The rolling-throttle response, which arrives as a 400. */
+function isThrottled(body: string): boolean {
+  return /URL_ROLLING_THROTTLES_LIMIT_EXCEEDED/.test(body)
 }
 
 function encodeForm(

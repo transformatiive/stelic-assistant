@@ -21,7 +21,8 @@ function row(overrides: Partial<IndexedProjectRow> = {}): IndexedProjectRow {
     dealName: 'MS Data Center',
     accountName: 'Clayco',
     aliases: ['Clayco', 'MS DC'],
-    chargeCodes: [{ taskId: 't1', taskName: 'Design', completed: false }],
+    chargeCodes: [{ taskId: 't1', taskName: 'Design', completed: false }] as
+      { taskId: string; taskName: string; completed: boolean }[] | null,
     ...overrides,
   }
 }
@@ -257,5 +258,35 @@ describe('an index with no charge codes is stale, however recent', () => {
     await saveProjectIndex(db.client, [codeless(), row({ projectId: 'p2' })], NOW)
     const later = new Date(NOW.getTime() + INDEX_MIN_RETRY_MS + 1000)
     expect(await isIndexStale(db.client, later)).toBe(false)
+  })
+})
+
+describe('a partial rebuild does not discard what it did not read', () => {
+  it('keeps stored charge codes when a run reports null', async () => {
+    // A throttled rebuild still writes every project. Overwriting the codes with an empty
+    // list would make the bot ask about a task it knew yesterday.
+    const db = new FakeDb()
+    await saveProjectIndex(db.client, [row()], NOW)
+    expect(db.projectIndexes[0]!.chargeCodes).toHaveLength(1)
+
+    await saveProjectIndex(db.client, [row({ chargeCodes: null })], NOW)
+    expect(db.projectIndexes[0]!.chargeCodes).toHaveLength(1)
+  })
+
+  it('still updates the rest of the row', async () => {
+    const db = new FakeDb()
+    await saveProjectIndex(db.client, [row()], NOW)
+    await saveProjectIndex(
+      db.client,
+      [row({ chargeCodes: null, projectName: 'Renamed' })],
+      NOW,
+    )
+    expect(db.projectIndexes[0]!.projectName).toBe('Renamed')
+  })
+
+  it('writes an empty list for a project it has never seen', async () => {
+    const db = new FakeDb()
+    await saveProjectIndex(db.client, [row({ chargeCodes: null })], NOW)
+    expect(db.projectIndexes[0]!.chargeCodes).toEqual([])
   })
 })

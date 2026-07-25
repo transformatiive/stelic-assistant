@@ -43,6 +43,15 @@ export async function refreshProjectIndex(
               status: error instanceof ZohoHttpError ? error.status : null,
             }),
           ),
+        onThrottled: (error) =>
+          console.warn(
+            JSON.stringify({
+              event: 'index.throttled',
+              retryAfterSeconds: error.retryAfterSeconds ?? null,
+              // Not a failure: every project is still indexed and matchable, and the next
+              // scheduled run fills in the charge codes it could not read.
+            }),
+          ),
       },
     )
 

@@ -36,13 +36,17 @@ export async function saveProjectIndex(
       dealName: row.dealName,
       accountName: row.accountName,
       aliases: row.aliases,
-      chargeCodes: row.chargeCodes,
       refreshedAt: now,
     }
+    // A null means this run did not read the tasks — a throttled or capped rebuild. Writing
+    // an empty list would discard codes the index already had and make the bot ask about a
+    // task it knew yesterday.
+    const codes = row.chargeCodes
+
     await db.projectIndex.upsert({
       where: { projectId: row.projectId },
-      create: { projectId: row.projectId, ...data },
-      update: data,
+      create: { projectId: row.projectId, ...data, chargeCodes: codes ?? [] },
+      update: codes === null ? data : { ...data, chargeCodes: codes },
     })
   }
 

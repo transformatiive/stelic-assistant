@@ -679,6 +679,28 @@ alone would find the client sometimes; `Customer` finds it always.
 `ratelimit-window-unit: seconds`, `ratelimit-remaining`. The client's backoff should read
 these rather than guess.
 
+**Zoho reports a spent quota as `400`, not `429`.** Verified live 2026-07-25 after two
+rounds of debugging the wrong cause:
+
+```jsonc
+{ "error": { "status_code": 400,
+             "title": "URL_ROLLING_THROTTLES_LIMIT_EXCEEDED",
+             "details": { "message": "Cannot execute more than 100 requests per API in 2
+                          minutes. Try again after 17 minutes." } } }
+```
+
+Three consequences the client has to encode:
+
+| Observation | Consequence |
+|---|---|
+| It is a `400`, and read as one it looks like a bad request | The client matches on the `title` and raises `ZohoRateLimitError`, so backoff logic can see it at all |
+| `ratelimit-remaining` is **absent** on the throttled response — it appears only on success | The header cannot be used to detect the condition, only to anticipate it |
+| The limit is **per API endpoint pattern**, rolling, and tripping it locks that endpoint for ~17 minutes (`retry-after: 1033`) | Retrying in-request is useless and actively harmful: each further call sustains the lockout. A rebuild that hits it must stop reading and let the next scheduled run continue |
+
+The error envelope also differs from the documented one: `{"error":{"status_code",…,"title"}}`
+rather than `{"code":6401,"message"}`. A parser that reads only the second logs `null` and
+learns nothing, which is what happened here.
+
 **API-created logs are born approved.** Every log created through the API came back
 `approval_status: "Approved"` with `approver_name` = the calling user, without anyone
 approving anything. This has a direct consequence for undo — see the timesheet-chat spec,
