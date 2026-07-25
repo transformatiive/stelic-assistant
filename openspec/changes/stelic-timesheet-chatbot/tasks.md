@@ -189,9 +189,14 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
       a blank billing role rather than a failure.
       Worth noting the contrast: `GET crm/v8/users` works, while Zoho **Projects**' own
       `users/` endpoint answers `403 Invalid OAuth scope` for this credential
-      — **not started.** `User.crm_user_id` is nullable and stays null through sign-in, which
-      is what AUTH-4 requires of the *absence* case, but nothing resolves it yet. Needs the
-      CRM read client from task group 3
+      — `lib/auth/crm-warm.ts` (`warmCrmUserId`), called post-response from `GET /api/me`
+      via Next.js `after()` so it never adds latency to the chat. Fires only when
+      `crmUserId` is null (i.e. once per person, ever); subsequent calls hit the cache on
+      the `User` row and cost nothing. Absence is silently tolerated — a failed warm leaves
+      `crmUserId` null, the billing-role stamper resolves it lazily on demand, and the chat
+      is unaffected. 5 tests in `tests/crm-warm.test.ts`: resolves and stores, skips when
+      already cached, survives a CRM 500, survives a network failure, leaves null when the
+      person has no CRM record
 - [x] 2.6 Session issue/validate/revoke; sliding expiry; `HttpOnly` `Secure` `SameSite=Lax`
       cookie — policy in `lib/auth/session.ts` (opaque 256-bit ids, cookie attributes, sliding
       expiry that only writes when the deadline has drifted more than an hour, salted IP
