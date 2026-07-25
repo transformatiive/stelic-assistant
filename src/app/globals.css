@@ -12,8 +12,8 @@
   color-scheme: light dark;
 }
 
-/* The chat surface is built in task group 8; these are the shell-level guarantees the
-   pwa-shell spec depends on (PWA-3): dynamic viewport height and safe-area insets. */
+/* Shell-level guarantees the pwa-shell spec depends on (PWA-3): dynamic viewport height and
+   safe-area insets. */
 html,
 body {
   height: 100%;
@@ -23,4 +23,7 @@ body {
   min-height: 100dvh;
   padding-left: env(safe-area-inset-left);
   padding-right: env(safe-area-inset-right);
+  /* `black-translucent` puts the web view *under* the iOS status bar, so without this the
+     first line of the header sits behind the clock. Zero everywhere else. */
+  padding-top: env(safe-area-inset-top);
 }

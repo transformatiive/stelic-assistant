@@ -531,9 +531,25 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
 
 ## 8. PWA and chat UI
 
-- [ ] 8.1 `manifest.ts`, icons (192, 512, maskable), theme colour, `display: standalone`
-- [ ] 8.2 iOS meta tags, apple-touch-icon, status-bar style, splash handling
-- [ ] 8.3 Service worker: app-shell caching only; never cache API responses
+- [x] 8.1 `manifest.ts`, icons (192, 512, maskable), theme colour, `display: standalone`
+      — the maskable variant is not a duplicate: Android crops a launcher icon to the device's
+      own shape, so it carries the artwork pulled into the safe zone with the accent band
+      dropped (a band running to the edge survives a circular crop only as a thin chord). The
+      mark's optical centre was **measured**, not guessed — it sits at y 36.6 of 100, because
+      the app icon reserves the foot of the square for the band. `scripts/generate-icons.mjs`
+      regenerates them; it is not part of the build, so a deploy never depends on `sharp`
+- [x] 8.2 iOS meta tags, apple-touch-icon, status-bar style, splash handling — iOS ignores the
+      manifest almost entirely, so without `apple-web-app-capable` the "installed" app opens
+      in a Safari tab with an address bar, which is exactly what installing was meant to
+      avoid. `black-translucent` needs `viewportFit: cover` **and** the safe-area top padding,
+      or the header sits behind the clock. `metadata`/`viewport` moved to their own module so
+      a test can assert this without a CSS pipeline
+- [x] 8.3 Service worker: app-shell caching only; never cache API responses — and the test
+      **executes the worker** against a fake `self` rather than grepping its source, because
+      a worker can grep right and behave wrong. A cached timesheet is a wrong timesheet, and
+      a cached `/api/me` would leave the last person's name on a shared device. Navigations
+      are network-first so a deploy lands without anyone clearing storage; cache writes go
+      through `waitUntil`, or the browser can kill the worker before the write does
 - [ ] 8.4 Chat layout: dynamic viewport height, sticky composer above the keyboard,
       safe-area insets, 16px minimum input font
 - [ ] 8.5 `MessageList` with auto-scroll and screen-reader announcement of new messages
