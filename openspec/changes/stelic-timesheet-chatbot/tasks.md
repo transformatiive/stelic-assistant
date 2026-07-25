@@ -452,8 +452,15 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
 - [x] 6.6 `/api/drafts/{id}/cancel` — idempotent, since the failure mode of a cancel button is
       a double tap. A confirmed draft is refused: cancelling does not undo anything, and
       answering `200` would leave someone believing hours had been removed from Zoho
-- [ ] 6.7 Undo: `/api/entries/{id}/undo` with same-day and app-origin guards; refuse approved
-      logs
+- [x] 6.7 Undo: `/api/entries/{id}/undo` with same-day and app-origin guards; refuse approved
+      logs — **the guard deliberately does not key off `approval_status`.** Spike 1.4 found
+      every API-created log comes back `Approved` with nobody approving anything, so that
+      check would have disabled undo entirely. App-origin is proved by our own `CommitLog`
+      row instead, which is stronger than `added_via: "api"` — that would also match anything
+      else built against the same portal. The route takes a `CommitLog` id, never a Zoho log
+      id, so a crafted request cannot delete an arbitrary log. "Same day" means the day of the
+      **commit**, in the person's own zone: backdating yesterday's hours this morning is
+      undoable this morning
 - [ ] 6.8 Week read-back: `/api/entries/week` grouped by day with total
 - [ ] 6.11 Establish a working week read-back contract. The week runs **Sunday–Saturday**:
       the portal's `startday_of_week` is `sunday`. The portal-wide
@@ -467,11 +474,18 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
       the value the same way the workflow does (TRNSF-914) and set it on the log's custom
       field. Without this the invoice pipeline sees an unroled log — check with the pipeline
       owner whether that breaks pricing or merely degrades reporting
-- [ ] 6.10 Undo guard against already-billed logs: refuse undo when the log's date falls in a
+- [~] 6.10 Undo guard against already-billed logs: refuse undo when the log's date falls in a
       period the invoice pipeline has already billed, so deleting it cannot orphan a pointer
       in the billing app's `invoiced_logs` ledger (`design.md §2`). Determine the boundary
       from Zoho or configuration — this app must not read the billing database
-- [ ] 6.9 Tests for double-confirm, partial failure, Zoho unavailable, expired draft
+      — implemented as `BILLING_LOCKED_THROUGH`, an optional ISO date; undo refuses on or
+      before it, unset means no lock. **The mechanism is done, the number is not**: nobody has
+      told us what the pipeline has billed through, and it moves every run. Ask the pipeline
+      owner for the boundary and whether it can be published somewhere this app may read
+- [x] 6.9 Tests for double-confirm, partial failure, Zoho unavailable, expired draft
+      — 62 tests across `commit-pipeline`, `commit-confirm`, `commit-undo` and
+      `zoho-timelogs`, including the two that matter most: an unparseable success is not
+      retried, and a Zoho error body never reaches a message a person reads
 
 ## 7. Chat API
 

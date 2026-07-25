@@ -842,7 +842,8 @@ SESSION_COOKIE_NAME
 SESSION_MAX_AGE_DAYS            # default 30, sliding
 BACKDATE_WARN_DAYS              # open question #6
 DEFAULT_BILL_STATUS             # open question #5
-DEFAULT_TIMEZONE                # America/New_York
+DEFAULT_TIMEZONE                # what a new user row starts with; the browser reports the real one
+BILLING_LOCKED_THROUGH          # optional ISO date; undo refuses on or before it (task 6.10)
 ```
 
 **The vault is the source, the environment is the interface.** Credentials are resolved from
