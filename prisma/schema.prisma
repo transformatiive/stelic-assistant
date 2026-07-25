@@ -30,7 +30,6 @@ model User {
   conversations Conversation[]
   drafts        Draft[]
   commitLogs    CommitLog[]
-  projectIndex  ProjectIndex[]
   rateLimits    RateLimit[]
 
   @@map("users")
@@ -187,25 +186,26 @@ model CommitLog {
 
 /// Per-user matching corpus. Built with the service credential so it can be warmed
 /// before a user first signs in (design.md §2).
+/// The portal, as the app sees it. **Shared, not per user.**
+///
+/// It was originally one copy per person, which quietly made a scheduled rebuild impossible:
+/// 145 projects is 145 Zoho calls, and against a 100-per-120-seconds limit fifteen people
+/// would take three quarters of an hour per run. Nothing here differs between users — the
+/// only thing that did was `lastLoggedAt`, and that is now derived from `CommitLog` when the
+/// index is read, so it costs no storage and cannot go stale.
 model ProjectIndex {
-  id              String    @id @default(cuid())
-  userId          String    @map("user_id")
-  projectId       String    @map("project_id")
-  projectName     String    @map("project_name")
-  projectIdString String?   @map("project_id_string")
-  crmDealId       String?   @map("crm_deal_id")
-  dealName        String?   @map("deal_name")
-  accountName     String?   @map("account_name")
-  aliases         String[]  @default([])
-  /// [{ task_id, task_name, labor_category, tasklist }]
-  chargeCodes     Json      @map("charge_codes")
-  lastLoggedAt    DateTime? @map("last_logged_at")
-  refreshedAt     DateTime  @default(now()) @map("refreshed_at")
+  id              String   @id @default(cuid())
+  projectId       String   @unique @map("project_id")
+  projectName     String   @map("project_name")
+  projectIdString String?  @map("project_id_string")
+  crmDealId       String?  @map("crm_deal_id")
+  dealName        String?  @map("deal_name")
+  accountName     String?  @map("account_name")
+  aliases         String[] @default([])
+  /// [{ task_id, task_name, tasklist, completed }]
+  chargeCodes     Json     @map("charge_codes")
+  refreshedAt     DateTime @default(now()) @map("refreshed_at")
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([userId, projectId])
-  @@index([userId])
   @@map("project_indexes")
 }
 

@@ -1,17 +1,18 @@
 import type { PrismaClient } from '@/generated/prisma/client'
 import type { IndexedProject } from './match'
-import type { IndexedProjectRow } from './build'
+import type { ChargeCode, IndexedProjectRow } from './build'
 
 /**
  * Persisting the project index (task 3.4).
  *
- * The index is per user, because recency is per user — the same portal ranks differently for
- * a designer and a project manager. Everything except `lastLoggedAt` is identical across
- * users, and duplicating it costs a few hundred rows per person; that is cheap next to the
- * join it would otherwise take on every message.
+ * **The index is shared, not per user.** It was originally one copy per person, which quietly
+ * made a scheduled rebuild impossible: 145 projects is 145 Zoho calls, and against a
+ * 100-per-120-seconds limit fifteen people would take three quarters of an hour per run.
+ * Nothing in the portal differs between users; the only thing that did was recency, which is
+ * now derived from `CommitLog` when the index is read.
  */
 
-/** How long an index is trusted before a refresh is due (task 3.4: hourly). */
+/** How long an index is trusted before a refresh is due. */
 export const INDEX_TTL_MS = 60 * 60 * 1000
 
 /**
@@ -24,7 +25,6 @@ export const INDEX_MIN_RETRY_MS = 5 * 60 * 1000
 
 export async function saveProjectIndex(
   db: PrismaClient,
-  userId: string,
   rows: readonly IndexedProjectRow[],
   now: Date = new Date(),
 ): Promise<{ written: number; removed: number }> {
@@ -40,10 +40,8 @@ export async function saveProjectIndex(
       refreshedAt: now,
     }
     await db.projectIndex.upsert({
-      where: { userId_projectId: { userId, projectId: row.projectId } },
-      // `lastLoggedAt` is deliberately absent from both branches: it is this user's own
-      // history, computed separately, and a portal refresh must not wipe it.
-      create: { userId, projectId: row.projectId, ...data },
+      where: { projectId: row.projectId },
+      create: { projectId: row.projectId, ...data },
       update: data,
     })
   }
@@ -51,70 +49,56 @@ export async function saveProjectIndex(
   // Anything not in this build is gone from the portal, or newly closed. Leaving it behind
   // would let the matcher keep offering a project nobody can log to.
   const { count } = await db.projectIndex.deleteMany({
-    where: { userId, projectId: { notIn: rows.map((r) => r.projectId) } },
+    where: { projectId: { notIn: rows.map((r) => r.projectId) } },
   })
 
   return { written: rows.length, removed: count }
 }
 
 /**
- * This user's most recent log per project (task 3.3).
+ * The index in the shape the matcher takes, with this user's recency folded in.
  *
- * Derived from `CommitLog` — this app's own record of what it wrote — rather than from Zoho.
- * The portal-wide range read that would give the full 60-day history is not available: both
- * documented forms return `6891 "Given URL is wrong"` (design §5, task 6.11). The verified
- * alternative is a per-task read, and walking every task of 145 projects is far outside a
- * 100-calls-per-120-seconds budget for a signal that only breaks ties.
+ * Recency is computed here rather than stored, which is what lets the index be shared. It
+ * comes from `CommitLog` — this app's own record of what it wrote — because Zoho's
+ * portal-wide range read does not work: both documented forms return `6891 "Given URL is
+ * wrong"` (design §5, task 6.11), and the verified per-task alternative would mean walking
+ * every task of 145 projects for a signal that only breaks ties.
  *
- * So recency starts empty for a new user and sharpens as they use the bot. That is a real
- * limitation with a real consequence — someone's first week gets no recency nudge — and it
- * is the right trade until 6.11 establishes a contract. It is not silently degraded: the
- * matcher caps recency at 0.10, below the 0.15 resolve gap, so its absence can only cost a
- * tie-break, never a correct match.
+ * So recency starts empty for a new user and sharpens with use. The consequence is bounded by
+ * design: the matcher caps recency at 0.10, below the 0.15 resolve gap, so its absence can
+ * cost a tie-break and never a correct match.
  */
-export async function refreshRecency(
-  db: PrismaClient,
-  userId: string,
-  windowDays = 60,
-  now: Date = new Date(),
-): Promise<number> {
-  const since = new Date(now.getTime() - windowDays * 86_400_000)
-
-  const recent = await db.commitLog.groupBy({
-    by: ['projectId'],
-    where: { userId, status: 'success', logDate: { gte: since } },
-    _max: { logDate: true },
-  })
-
-  let updated = 0
-  for (const row of recent) {
-    const lastLoggedAt = row._max?.logDate
-    if (!lastLoggedAt) continue
-    const { count } = await db.projectIndex.updateMany({
-      where: { userId, projectId: row.projectId },
-      data: { lastLoggedAt },
-    })
-    updated += count
-  }
-  return updated
-}
-
-/** The index in the shape the matcher takes. */
 export async function loadProjectIndex(
   db: PrismaClient,
   userId: string,
+  options: { recencyWindowDays?: number; now?: Date } = {},
 ): Promise<IndexedProject[]> {
-  const rows = await db.projectIndex.findMany({
-    where: { userId },
-    select: {
-      projectId: true,
-      projectName: true,
-      accountName: true,
-      dealName: true,
-      aliases: true,
-      lastLoggedAt: true,
-    },
-  })
+  const now = options.now ?? new Date()
+  const since = new Date(now.getTime() - (options.recencyWindowDays ?? 60) * 86_400_000)
+
+  const [rows, recent] = await Promise.all([
+    db.projectIndex.findMany({
+      select: {
+        projectId: true,
+        projectName: true,
+        accountName: true,
+        dealName: true,
+        aliases: true,
+      },
+    }),
+    db.commitLog.groupBy({
+      by: ['projectId'],
+      where: { userId, status: 'success', logDate: { gte: since } },
+      _max: { logDate: true },
+    }),
+  ])
+
+  const lastLogged = new Map<string, string>()
+  for (const row of recent) {
+    const date = row._max?.logDate
+    // The matcher compares civil dates, not instants — a log belongs to a day, not a moment.
+    if (date) lastLogged.set(row.projectId, date.toISOString().slice(0, 10))
+  }
 
   return rows.map((row) => ({
     projectId: row.projectId,
@@ -122,13 +106,24 @@ export async function loadProjectIndex(
     accountName: row.accountName,
     dealName: row.dealName,
     aliases: row.aliases,
-    // The matcher compares civil dates, not instants — a log belongs to a day, not a moment.
-    lastLoggedAt: row.lastLoggedAt ? row.lastLoggedAt.toISOString().slice(0, 10) : null,
+    lastLoggedAt: lastLogged.get(row.projectId) ?? null,
   }))
 }
 
+/** Charge codes per project, for the resolver. */
+export async function loadChargeCodes(
+  db: PrismaClient,
+): Promise<Map<string, ChargeCode[]>> {
+  const rows = await db.projectIndex.findMany({
+    select: { projectId: true, chargeCodes: true },
+  })
+  return new Map(
+    rows.map((row) => [row.projectId, row.chargeCodes as unknown as ChargeCode[]]),
+  )
+}
+
 /**
- * Whether the index needs rebuilding (task 3.4: build on login, refresh hourly).
+ * Whether the index needs rebuilding.
  *
  * Age is not the only way an index goes bad. A rebuild in which **every** task read failed
  * produces an index that is fresh by timestamp and useless in substance — it can match a
@@ -140,11 +135,9 @@ export async function loadProjectIndex(
  */
 export async function isIndexStale(
   db: PrismaClient,
-  userId: string,
   now: Date = new Date(),
 ): Promise<boolean> {
   const newest = await db.projectIndex.findFirst({
-    where: { userId },
     orderBy: { refreshedAt: 'desc' },
     select: { refreshedAt: true },
   })
@@ -154,7 +147,7 @@ export async function isIndexStale(
   if (age > INDEX_TTL_MS) return true
   if (age < INDEX_MIN_RETRY_MS) return false
 
-  return !(await hasAnyChargeCodes(db, userId))
+  return !(await hasAnyChargeCodes(db))
 }
 
 /**
@@ -163,12 +156,11 @@ export async function isIndexStale(
  * Asked as an existence check rather than by loading the index: the answer is one boolean and
  * the index is hundreds of rows carrying a JSON column each.
  */
-async function hasAnyChargeCodes(db: PrismaClient, userId: string): Promise<boolean> {
+async function hasAnyChargeCodes(db: PrismaClient): Promise<boolean> {
   const rows = await db.$queryRaw<{ exists: boolean }[]>`
     SELECT EXISTS (
       SELECT 1 FROM project_indexes
-      WHERE user_id = ${userId}
-        AND jsonb_array_length(charge_codes) > 0
+      WHERE jsonb_array_length(charge_codes) > 0
     ) AS "exists"
   `
   return rows[0]?.exists ?? false

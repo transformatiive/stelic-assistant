@@ -3,13 +3,17 @@
 import { useEffect, useState } from 'react'
 
 /**
- * Builds the project index when it is stale (task 3.4: "build on login, refresh hourly").
+ * A safety net for the scheduled rebuild (task 3.4).
  *
- * Runs from the browser rather than from the page render for one reason: a full rebuild walks
- * every project and its tasks, and blocking the first paint on a minute of Zoho calls would
- * make signing in feel broken. The page renders immediately, this catches up behind it.
+ * The schedule is what keeps the index current — sessions last thirty days, so a returning
+ * user goes straight to the chat and may never trigger a page load that happens to be the
+ * first of the hour. This covers the gap before a first scheduled run, and a schedule that
+ * has stopped.
  *
- * The `GET` costs no Zoho call, so the common case — a warm index — is one cheap request.
+ * Runs from the browser rather than the page render: a full rebuild walks every project and
+ * its tasks, and blocking first paint on a minute of Zoho calls would make the app feel
+ * broken. The `GET` costs no Zoho call, so the common case — a warm index — is one cheap
+ * request and nothing is rendered at all.
  */
 
 type Status =

@@ -62,6 +62,12 @@ const configSchema = z.object({
     message: 'must decode to exactly 32 bytes (base64 or hex)',
   }),
 
+  /**
+   * Bearer secret for the scheduled index rebuild. Optional: without it the cron route
+   * refuses to run, which is safer than an open endpoint that can spend the Zoho rate limit.
+   */
+  CRON_SECRET: nonEmpty.optional(),
+
   SESSION_COOKIE_NAME: nonEmpty.default('stelic_session'),
   SESSION_MAX_AGE_DAYS: z.coerce.number().int().positive().default(30),
 
