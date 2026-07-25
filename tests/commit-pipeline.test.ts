@@ -138,7 +138,7 @@ describe('double confirmation', () => {
       idempotencyKey: idempotencyKey({
         userId: 'user_1',
         projectId: entry().projectId,
-        taskId: entry().taskId,
+        taskId: entry().taskId!,
         logDate: '2026-07-24',
         hours: 8,
         description: 'Structural review',
@@ -287,5 +287,117 @@ describe('a success Zoho described badly', () => {
     // Undo will refuse for this one, so it is worth a log line — but the hours are logged.
     expect(db.commitLogs[0]!.zohoLogId).toBeNull()
     expect(warn).toHaveBeenCalledWith('commit.log_id_unreadable', expect.anything())
+  })
+})
+
+describe('a task the user asked to add', () => {
+  // CHAT-7's new-task answer: `taskId: null` means "create this by name before logging".
+  const newTask = () => entry({ taskId: null, taskName: 'i created an app' })
+
+  /** A responder that routes by URL and method, recording the order of calls. */
+  function routedZoho(routes: {
+    listTasks: () => Response
+    createTask?: () => Response
+    createLog?: () => Response
+  }) {
+    const calls: string[] = []
+    const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async (url, init) => {
+      const path = String(url)
+      const method = init?.method ?? 'GET'
+      if (path.includes('/logs/')) {
+        calls.push('log')
+        return (routes.createLog ?? (() => created('99')))()
+      }
+      if (method === 'POST') {
+        calls.push('createTask')
+        return (routes.createTask ?? (() => taskCreated('task_new_1')))()
+      }
+      calls.push('listTasks')
+      return routes.listTasks()
+    })
+    return {
+      calls,
+      fetchImpl,
+      client: new ZohoClient({
+        baseUrl: 'https://projectsapi.zoho.com/restapi/portal/911636649/',
+        tokens: {
+          mode: 'user',
+          getAccessToken: async () => 'at',
+          refreshAccessToken: async () => 'at',
+        },
+        fetchImpl,
+        maxRateLimitRetries: 0,
+      }),
+    }
+  }
+
+  const taskCreated = (id: string) =>
+    new Response(
+      JSON.stringify({ tasks: [{ id_string: id, name: 'i created an app' }] }),
+      { status: 201, headers: { 'content-type': 'application/json' } },
+    )
+
+  const taskList = (tasks: { id: string; name: string }[]) =>
+    new Response(
+      JSON.stringify({ tasks: tasks.map((t) => ({ id_string: t.id, name: t.name })) }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    )
+
+  const noTasks = () => new Response(null, { status: 204 })
+
+  it('creates the task first, then logs against the id Zoho assigned', async () => {
+    const db = new FakeDb()
+    const { client, calls } = routedZoho({ listTasks: noTasks })
+
+    const result = await commitEntries(db.client, client, input([newTask()]))
+
+    expect(result.created).toBe(1)
+    expect(calls).toEqual(['listTasks', 'createTask', 'log'])
+    // The ledger row carries the real id — it is what undo deletes against.
+    expect(db.commitLogs[0]!).toMatchObject({ status: 'success', taskId: 'task_new_1' })
+  })
+
+  it('reuses a same-named task rather than creating a twin', async () => {
+    // A retry after "task created, log failed", or a task added in the Zoho UI since the
+    // index refreshed — either way the name already exists, and creating again would leave
+    // two tasks where the person expects one. Case must not defeat the match.
+    const db = new FakeDb()
+    const { client, calls } = routedZoho({
+      listTasks: () => taskList([{ id: 'task_77', name: 'I Created An App' }]),
+    })
+
+    const result = await commitEntries(db.client, client, input([newTask()]))
+
+    expect(result.created).toBe(1)
+    expect(calls).toEqual(['listTasks', 'log'])
+    expect(db.commitLogs[0]!.taskId).toBe('task_77')
+  })
+
+  it('fails the entry cleanly when the task cannot be created, and logs nothing', async () => {
+    const db = new FakeDb()
+    const { client, calls } = routedZoho({
+      listTasks: noTasks,
+      createTask: () => new Response('denied', { status: 403 }),
+    })
+
+    const result = await commitEntries(db.client, client, input([newTask()]))
+
+    expect(result.failed).toBe(1)
+    // No time log call: an entry whose task never existed must not book hours anywhere.
+    expect(calls).toEqual(['listTasks', 'createTask'])
+    expect(db.commitLogs[0]!.status).toBe('failed')
+  })
+
+  it('books under a stable key, so a double confirm cannot create the task twice', async () => {
+    const db = new FakeDb()
+    const first = routedZoho({ listTasks: noTasks })
+    await commitEntries(db.client, first.client, input([newTask()]))
+
+    // Second confirm: the ledger row is already `success`, so no Zoho call of any kind.
+    const second = routedZoho({ listTasks: noTasks })
+    const result = await commitEntries(db.client, second.client, input([newTask()]))
+
+    expect(result.duplicates).toBe(1)
+    expect(second.calls).toEqual([])
   })
 })

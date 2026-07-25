@@ -5,6 +5,7 @@ import { resolveDate } from './date'
 import {
   resolveProject,
   resolveTask,
+  resolveTypedTask,
   type DraftEntry,
   type ResolveContext,
   type SlotName,
@@ -132,6 +133,9 @@ export function applyAnswer(
           entry.project.status === 'resolved' ? entry.project.projectId : '',
         )
         const chosen = codes?.find((c) => c.taskId === answer.value)
+        // A chip posts an existing task's id. Typed text is a deliberate answer to the shown
+        // list: a typo narrows to the existing task, and anything genuinely new becomes a
+        // task to create at commit time — Zoho lets anyone add a task, so the chat does too.
         const task: DraftEntry['task'] = chosen
           ? {
               status: 'resolved',
@@ -139,7 +143,7 @@ export function applyAnswer(
               taskName: chosen.taskName,
               why: 'you picked it',
             }
-          : resolveTask(entry.project, answer.value, context)
+          : resolveTypedTask(entry.project, answer.value, context)
         return { ...entry, task }
       }
 

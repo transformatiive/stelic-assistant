@@ -90,8 +90,9 @@ box — send it when you are back. Nothing is queued behind your back.
 day. A project created in the last few hours may not be there yet. Say more of the name, or
 the client's name.
 
-**"That project has no charge codes set up yet."** Nothing to log against — your PM has to
-add one in Zoho. The rest of your entries still go through.
+**"That project has no charge codes yet."** Type what you worked on and it becomes a new
+task on the project when you confirm — same as adding a task in Zoho yourself. This also
+works when the listed charge codes don't fit: type the task you want instead of tapping.
 
 **Anything else.** It tells you in a plain sentence and offers to try again. If it keeps
 happening, send the message you typed and roughly when, to whoever set this up.

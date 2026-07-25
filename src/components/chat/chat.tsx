@@ -257,7 +257,7 @@ export function Chat({ today }: { today: string }) {
       {state.bubbles.length === 0 ? (
         <Empty />
       ) : (
-        <MessageList bubbles={state.bubbles} renderUi={renderUi} />
+        <MessageList bubbles={state.bubbles} busy={state.busy} renderUi={renderUi} />
       )}
 
       <Composer

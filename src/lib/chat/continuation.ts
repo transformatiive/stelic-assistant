@@ -80,8 +80,12 @@ export const CONTINUATION_TOOL = {
           description:
             '"answer" if the message answers the question just asked, or corrects a value ' +
             'already given anywhere in the draft below (right project but wrong date, right ' +
-            'day but wrong hours, and so on). "new_message" if it is unrelated to this draft — ' +
-            'a fresh topic, a new time entry, a question, or small talk.',
+            'day but wrong hours, and so on). Rejecting the offered options is still an ' +
+            'answer: "none of these", "something else", or naming an option that was not ' +
+            'offered — for the task question, a task that does not exist yet can be added, ' +
+            'so a brand-new name is a valid answer. "new_message" only if the message is ' +
+            'unrelated to this draft — a fresh topic, a new time entry, a question, or ' +
+            'small talk.',
         },
         updates: {
           type: ['array', 'null'],
@@ -157,6 +161,12 @@ export function buildContinuationSystemPrompt(
     '',
     'Decide whether the new message answers that question, corrects a value already in the',
     'draft above, or is unrelated to it entirely.',
+    '',
+    'Rejecting the offered options is still an answer. "None of these", "something else", or',
+    'naming an option that was not offered all answer the pending question — for the task',
+    'question specifically, the user may name a task that does not exist yet (it can be',
+    'added), so treat phrases like \'i want something else like "built the app"\' as an answer',
+    'with the proposed name as the value.',
     '',
     "Copy the user's own words into `value` — never invent a project name, resolve a date, or",
     'compute an hours total yourself. That happens afterwards, deterministically.',

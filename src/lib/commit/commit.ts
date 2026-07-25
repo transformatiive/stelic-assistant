@@ -1,6 +1,7 @@
 import type { PrismaClient } from '@/generated/prisma/client'
 import type { ZohoClient } from '@/lib/zoho/client'
 import { ZohoAuthError, ZohoHttpError, ZohoRateLimitError } from '@/lib/zoho/errors'
+import { createTask, findTaskByName } from '@/lib/zoho/projects'
 import { createTimeLog } from '@/lib/zoho/timelogs'
 import { idempotencyKey } from './idempotency'
 
@@ -30,7 +31,12 @@ export type CommittableEntry = {
   entryId: string
   projectId: string
   projectName: string
-  taskId: string
+  /**
+   * `null` for a task the user asked to add (CHAT-7): the pipeline finds an existing task of
+   * this name on the project — a retry after "task created, log failed", or one added in the
+   * Zoho UI since the index refreshed — and creates it only when none exists.
+   */
+  taskId: string | null
   taskName: string
   /** ISO `YYYY-MM-DD` in the user's timezone. */
   date: string
@@ -114,16 +120,21 @@ export async function commitEntries(
       continue
     }
 
+    // A new task has no id yet, so the booking is keyed (and the ledger row written) under a
+    // name-derived placeholder — stable across retries, which is what the double-book guard
+    // hangs on. The real id replaces it the moment the task exists.
+    const claimedTaskId = entry.taskId ?? `new:${entry.taskName.trim().toLowerCase()}`
+
     const key = idempotencyKey({
       userId: input.userId,
       projectId: entry.projectId,
-      taskId: entry.taskId,
+      taskId: claimedTaskId,
       logDate: entry.date,
       hours: entry.hours,
       description: entry.description,
     })
 
-    const claim = await claimRow(db, key, input, entry, now())
+    const claim = await claimRow(db, key, input, entry, claimedTaskId, now())
 
     if (claim.kind === 'settled') {
       outcomes.push(claim.outcome)
@@ -133,9 +144,27 @@ export async function commitEntries(
     const commitLogId = claim.commitLogId
 
     try {
+      let taskId = entry.taskId
+      if (taskId === null) {
+        // Find-or-create, in that order: a retry after "task created, log failed" must reuse
+        // the first attempt's task, and a same-named task added in the Zoho UI since the
+        // index refreshed should be used rather than duplicated.
+        const existing = await findTaskByName(client, entry.projectId, entry.taskName)
+        const task =
+          existing ?? (await createTask(client, entry.projectId, entry.taskName))
+        taskId = task.id
+        logger.info(existing ? 'commit.task_reused' : 'commit.task_created', {
+          commitLogId,
+          projectId: entry.projectId,
+          taskId,
+        })
+        // The ledger row now names the real task, which is also what undo deletes against.
+        await db.commitLog.update({ where: { id: commitLogId }, data: { taskId } })
+      }
+
       const result = await createTimeLog(client, {
         projectId: entry.projectId,
-        taskId: entry.taskId,
+        taskId,
         date: entry.date,
         hours: entry.hours,
         billable: entry.billable,
@@ -164,9 +193,10 @@ export async function commitEntries(
       } else if (input.stampRole) {
         // After the row says `success`, and swallowing its own failure. The hours are in
         // Zoho either way; the role is metadata for the invoice pipeline's benefit, and
-        // nothing about it is worth turning a logged day into a failed one.
+        // nothing about it is worth turning a logged day into a failed one. The entry carries
+        // the *resolved* task id — for a just-created task, the one Zoho assigned.
         try {
-          await input.stampRole(entry, result.log.id)
+          await input.stampRole({ ...entry, taskId }, result.log.id)
         } catch (error) {
           logger.warn('commit.role_stamp_failed', {
             commitLogId,
@@ -247,6 +277,7 @@ async function claimRow(
   key: string,
   input: CommitInput,
   entry: CommittableEntry,
+  claimedTaskId: string,
   at: Date,
 ): Promise<Claim> {
   const data = {
@@ -255,7 +286,7 @@ async function claimRow(
     idempotencyKey: key,
     projectId: entry.projectId,
     projectName: entry.projectName,
-    taskId: entry.taskId,
+    taskId: claimedTaskId,
     taskName: entry.taskName,
     logDate: new Date(`${entry.date}T00:00:00.000Z`),
     hoursDecimal: entry.hours,

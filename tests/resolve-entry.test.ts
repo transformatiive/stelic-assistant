@@ -5,6 +5,7 @@ import {
   resolveEntries,
   resolveEntry,
   resolveTask,
+  resolveTypedTask,
   type ResolveContext,
 } from '@/lib/resolve/entry'
 import {
@@ -429,6 +430,55 @@ describe('applyAnswer', () => {
       context(),
     )
     expect(updated[0]!.task).toMatchObject({ status: 'resolved', taskId: 't-sched' })
+  })
+
+  it('turns a typed task matching nothing into a task to create on confirm', () => {
+    // The live field report: chips for Kick-off and Reporting, and the user typed
+    // 'i want something else like "i created an app"'. Zoho lets anyone add a task, so a
+    // deliberate answer that matches no existing charge code becomes one — created only when
+    // the card is confirmed, and marked as new on it.
+    const entries = resolveEntries(
+      [extracted({ project_query: 'clayco', charge_code_hint: null })],
+      context(),
+    )
+    const updated = applyAnswer(
+      entries,
+      { entryId: 'e1', slot: 'task', value: 'i created an app' },
+      context(),
+    )
+    expect(updated[0]!.task).toEqual({
+      status: 'resolved',
+      taskId: null,
+      taskName: 'i created an app',
+      why: 'a new task, added to the project when you confirm',
+    })
+  })
+
+  it('asks again for a too-short typed task rather than creating "x" in Zoho', () => {
+    const entries = resolveEntries(
+      [extracted({ project_query: 'clayco', charge_code_hint: null })],
+      context(),
+    )
+    const updated = applyAnswer(
+      entries,
+      { entryId: 'e1', slot: 'task', value: 'x' },
+      context(),
+    )
+    expect(updated[0]!.task.status).toBe('unresolved')
+  })
+
+  it('lets a project with no charge codes take a typed task — no more dead end', () => {
+    // CHAT-3's old answer was "ask your PM". Now the typed name becomes the task.
+    const task = resolveTypedTask(
+      { status: 'resolved', projectId: 'p-empty', projectName: 'Empty', why: '' },
+      'site walkthrough',
+      context({ chargeCodes: new Map() }),
+    )
+    expect(task).toMatchObject({
+      status: 'resolved',
+      taskId: null,
+      taskName: 'site walkthrough',
+    })
   })
 
   it('touches only the entry it names', () => {
