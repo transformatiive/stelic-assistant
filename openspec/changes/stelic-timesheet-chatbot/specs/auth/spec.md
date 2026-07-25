@@ -83,10 +83,21 @@ bundle, or written to `localStorage`, `sessionStorage`, or IndexedDB.
 
 ### Requirement: AUTH-3 — Identity maps to a Zoho Projects portal user
 
-On first login, and on any login where the mapping is absent, the app SHALL resolve the
-signed-in email to a portal user on `ZOHO_PORTAL_ID` using the **service** credential, and
-SHALL store `zoho_projects_user_id` on the `User` row. Email is the join key across CRM,
-Projects and Books in this estate; matching SHALL be case-insensitive and whitespace-trimmed.
+On every login the app SHALL establish, **from the signed-in user's own token**, that they are
+a member of `ZOHO_PORTAL_ID`, and SHALL store their zuid as `zoho_projects_user_id` on the
+`User` row. It SHALL also store their email, which is the join key across CRM, Projects and
+Books in this estate; matching SHALL be case-insensitive and whitespace-trimmed.
+
+> **Resolved by task 0.2 and spike 1.4.** This requirement originally specified an email →
+> portal-user lookup on the **service** credential. That is not possible: both
+> `GET /portal/{id}/users/` and `GET /projects/{id}/users/` return
+> `403 {"code":6403,"message":"Invalid OAuth scope."}`, and no project-scoped workaround
+> exists. It is also no longer needed. `GET /restapi/portals/` works on an ordinary user
+> token and returns `login_id` — the caller's zuid — alongside the portals they belong to, so
+> the signed-in user self-identifies and membership is proven by the same call. Spike 1.4
+> confirmed the zuid is exactly what the time-log `owner` parameter takes. Email and display
+> name come from `GET /oauth/user/info` on the accounts server, which the portals endpoint
+> does not carry.
 
 #### Scenario: Valid Zoho account without portal membership
 
@@ -100,21 +111,35 @@ Projects and Books in this estate; matching SHALL be case-insensitive and whites
 
 #### Scenario: Portal user found
 
-- **GIVEN** the signed-in email matches exactly one portal user
+- **GIVEN** the signed-in user's own token lists `ZOHO_PORTAL_ID` among their portals
 - **WHEN** the callback completes
-- **THEN** `User.zoho_projects_user_id` is set to that portal user id
-- **AND** `User.display_name` is taken from the Zoho profile
+- **THEN** `User.zoho_projects_user_id` is set to their zuid (`login_id`)
+- **AND** `User.email` and `User.display_name` are taken from the Zoho profile
 - **AND** the session is issued
 
-#### Scenario: Portal user lookup is unavailable
+#### Scenario: Portal lookup is unavailable
 
-- **GIVEN** `GET /portal/{id}/users/` returns 401 or 403 because the service token lacks the
-  scope (the gap in task 0.2)
+- **GIVEN** `GET /restapi/portals/` or `GET /oauth/user/info` fails, or answers something the
+  app cannot read
 - **WHEN** a user attempts to sign in
 - **THEN** no session is issued
 - **AND** the user sees "Sign-in is temporarily unavailable. This has been reported." rather
   than a scope or token error
 - **AND** an operational alert is raised — this is a configuration fault, not a user fault
+
+#### Scenario: Membership is never assumed
+
+- **GIVEN** the portals response is unreadable, so membership can be neither confirmed nor
+  denied
+- **THEN** the app SHALL fail closed and issue no session
+- **AND** it SHALL NOT fall back to treating an unreadable answer as membership
+
+#### Scenario: A person whose Zoho email changed
+
+- **GIVEN** an existing `User` row created under a previous email address
+- **WHEN** that person signs in and Zoho reports a new email for the same zuid
+- **THEN** the existing row is updated with the new address
+- **AND** no second `User` row is created, so their history stays attached to them
 
 ---
 
