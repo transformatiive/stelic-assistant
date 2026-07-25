@@ -645,6 +645,36 @@ returns the portal's own configuration, verified 2026-07-25:
 | `settings.time_zone` | `America/Los_Angeles` | **Differs from `DEFAULT_TIMEZONE` (`America/New_York`)** — see task 5.10 |
 | `working_days` | Sun–Thu | Looks like a misconfiguration rather than intent; flagged, not acted on |
 
+**Custom fields are not `{ label_name, value }` pairs.** Verified against all 145 live
+projects on 2026-07-25 (temporary n8n probe, since archived). Zoho Projects returns one
+single-key object per field, with the **label itself as the key**:
+
+```jsonc
+"custom_fields": [
+  { "CRM Deal ID": "7217638000003716102" },
+  { "Books Project ID": "BOOKS-TEST-1066" },
+  { "Rate Sheet Name": "Construction Management" },
+  { "Billing Model": "T&M" },
+  { "Entity": "Stelic LLC" },
+  { "BigTime Project SID": "11824079" },
+  { "Customer": "Clayco Construction Company Inc" }
+]
+```
+
+Consequences, all of them load-bearing:
+
+| Finding | Consequence |
+|---|---|
+| `crm_deal_id` as a **column** is absent on all 145 projects; the id lives in `custom_fields` under `CRM Deal ID`, present on all 145 | Task 3.2 cannot read the documented column alone |
+| **`Customer` is present on all 145**, 44 distinct values, none blank | The client name does **not** require a CRM round trip. CRM is now enrichment for the deal *name* only, and a CRM failure or a missing `ZohoCRM.modules.READ` scope costs a nice-to-have rather than the index |
+| **Every one of the 145 numeric `id` values is precision-corrupted** | The `id_string` rule is not defensive programming, it is the only thing that works |
+| All 145 projects report `status: "active"` | The closed-project filter is inert on this portal today; kept as a guard |
+
+Project names are inconsistent enough that the `Customer` field matters:
+`Google LLC — 1080 - Google: Capital Projects Dashboard`,
+`1066 - 1066 - Clayco EKI Data Center`, and a bare `POPULOUS` all appear. Splitting the name
+alone would find the client sometimes; `Customer` finds it always.
+
 **Rate limiting.** Responses carry `ratelimit: 100`, `ratelimit-window: 120`,
 `ratelimit-window-unit: seconds`, `ratelimit-remaining`. The client's backoff should read
 these rather than guess.

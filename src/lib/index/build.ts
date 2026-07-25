@@ -64,10 +64,13 @@ export function isLoggable(project: ZohoProject): boolean {
  * names join them, because those are equally likely to be what someone says.
  */
 export function aliasesFor(project: ZohoProject, deal: CrmDeal | undefined): string[] {
+  const accountName = project.customerName ?? deal?.accountName
   const candidates = [
     ...nameFragments(project.name),
     ...(deal?.dealName ? nameFragments(deal.dealName) : []),
-    ...(deal?.accountName ? [deal.accountName] : []),
+    // The customer as a whole and in pieces: live names run to
+    // "Clayco Construction Company Inc", and nobody says that out loud.
+    ...(accountName ? [accountName, ...nameFragments(accountName)] : []),
   ]
 
   const seen = new Set<string>()
@@ -118,6 +121,10 @@ export type BuildResult = {
     projectsWithTasksFetched: number
     dealsResolved: number
     dealsRequested: number
+    /** How many rows got a client name — from the project itself or from CRM. */
+    projectsWithAccountName: number
+    /** Set when the CRM read failed. The index is still usable; deal names are missing. */
+    crmFailure?: string
   }
 }
 
@@ -127,12 +134,21 @@ export async function buildProjectIndex(
 ): Promise<BuildResult> {
   const allProjects = await listProjects(clients.projects)
   const projects = allProjects.filter(isLoggable)
+  let crmFailure: string | undefined
 
-  // One batched CRM call for every deal at once, rather than one per project.
+  // One batched CRM call for every deal at once, rather than one per project — and only
+  // for the deal *name*, since the client name already rides on the project (see below).
+  // A CRM failure therefore costs a nice-to-have, not the index.
   const dealIds = projects
     .map((p) => p.crmDealId)
     .filter((id): id is string => Boolean(id))
-  const deals = await fetchDealsByIds(clients.crm, dealIds)
+
+  let deals = new Map<string, CrmDeal>()
+  try {
+    deals = await fetchDealsByIds(clients.crm, dealIds)
+  } catch (error) {
+    crmFailure = error instanceof Error ? error.name : 'unknown'
+  }
 
   const limit = options.maxProjectsWithTasks ?? projects.length
   const rows: IndexedProjectRow[] = []
@@ -152,7 +168,9 @@ export async function buildProjectIndex(
       projectName: project.name,
       crmDealId: project.crmDealId ?? null,
       dealName: deal?.dealName ?? null,
-      accountName: deal?.accountName ?? null,
+      // The project's own `Customer` field first. Every project on this portal carries one,
+      // and it does not depend on a CRM scope or a second service being up.
+      accountName: project.customerName ?? deal?.accountName ?? null,
       aliases: aliasesFor(project, deal),
       chargeCodes,
     })
@@ -168,6 +186,8 @@ export async function buildProjectIndex(
       projectsWithTasksFetched: tasksFetched,
       dealsResolved: deals.size,
       dealsRequested: new Set(dealIds).size,
+      projectsWithAccountName: rows.filter((r) => r.accountName).length,
+      ...(crmFailure ? { crmFailure } : {}),
     },
   }
 }

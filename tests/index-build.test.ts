@@ -215,3 +215,88 @@ describe('buildProjectIndex', () => {
     expect(seenProgress).toEqual([1, 2])
   })
 })
+
+// The live portal, as the probe found it on 2026-07-25.
+describe('a portal where the client name rides on the project', () => {
+  const LIVE_ROUTES = {
+    '/projects/?': {
+      projects: [
+        {
+          id: 2620762000000790000, // precision-corrupted, as all 145 live ids are
+          id_string: '2620762000000790022',
+          name: 'Google LLC — 1080 - Google: Capital Projects Dashboard',
+          status: 'active',
+          custom_fields: [
+            { 'CRM Deal ID': '7217638000000702236' },
+            { Customer: 'Google LLC' },
+          ],
+        },
+        {
+          id_string: '2620762000000565019',
+          name: '1066 - 1066 - Clayco EKI Data Center',
+          status: 'active',
+          custom_fields: [
+            { 'CRM Deal ID': '7217638000003716102' },
+            { Customer: 'Clayco Construction Company Inc' },
+          ],
+        },
+      ],
+    },
+    '/projects/2620762000000790022/tasks/': { tasks: [] },
+    '/projects/2620762000000565019/tasks/': { tasks: [] },
+    'crm/v8/Deals': { data: [] },
+  }
+
+  it('names the client from the project, with no CRM call needed', async () => {
+    const { clients } = portal(LIVE_ROUTES)
+    const { rows, stats } = await buildProjectIndex(clients)
+
+    expect(rows[0]!.accountName).toBe('Google LLC')
+    expect(rows[1]!.accountName).toBe('Clayco Construction Company Inc')
+    // CRM returned nothing, yet every row still has a client name.
+    expect(stats.dealsResolved).toBe(0)
+    expect(stats.projectsWithAccountName).toBe(2)
+  })
+
+  it('keeps building when the CRM read fails outright', async () => {
+    // A missing ZohoCRM scope must cost deal names, not the whole index.
+    const { clients } = portal(LIVE_ROUTES)
+    const failing = {
+      projects: clients.projects,
+      crm: {
+        requestJson: async () => {
+          throw new Error('Invalid OAuth scope')
+        },
+      } as unknown as (typeof clients)['crm'],
+    }
+    const { rows, stats } = await buildProjectIndex(failing)
+
+    expect(rows).toHaveLength(2)
+    expect(rows[0]!.accountName).toBe('Google LLC')
+    expect(stats.crmFailure).toBe('Error')
+  })
+
+  it('makes the long client name matchable by the short one people say', async () => {
+    const { clients } = portal(LIVE_ROUTES)
+    const { rows } = await buildProjectIndex(clients)
+
+    // Nobody types "Clayco Construction Company Inc".
+    const index = rows.map((r) => ({
+      projectId: r.projectId,
+      projectName: r.projectName,
+      accountName: r.accountName,
+      aliases: r.aliases,
+    }))
+    const result = matchProject('clayco', index, TODAY)
+    expect(result.status).toBe('resolved')
+    if (result.status === 'resolved') {
+      expect(result.match.project.projectId).toBe('2620762000000565019')
+    }
+  })
+
+  it('uses id_string even though every live numeric id is corrupted', async () => {
+    const { clients } = portal(LIVE_ROUTES)
+    const { rows } = await buildProjectIndex(clients)
+    expect(rows[0]!.projectId).toBe('2620762000000790022')
+  })
+})

@@ -231,10 +231,20 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
       CRM
       — `lib/zoho/crm.ts`. One batched call for every deal rather than one per project. The
       deal id is read from the documented column and, failing that, from a custom field, since
-      not every portal carries it the same way. A project whose deal CRM does not return keeps
-      its row and loses only the client name — a deleted deal must not drop a live project out
-      of the index. A `204` on a batch means "none of these exist"; any other error propagates,
-      because a systematically broken CRM read must not quietly look like "no clients"
+      not every portal carries it the same way.
+      **Corrected 2026-07-25 after probing the live portal.** `custom_fields` is not a list of
+      `{ label_name, value }` pairs — it is one single-key object per field, with the label as
+      the key. The original parser matched nothing, so all 145 projects silently lost both
+      their deal id and their client name. Worse, the assumption was invisible: zero matches
+      looks exactly like a portal that simply has no CRM links.
+      The fix turned out to be an improvement. **`Customer` is present on all 145 projects**
+      (44 distinct values, none blank), so the client name comes straight off the project and
+      the CRM round trip is now enrichment for the deal *name* only. A CRM failure, or a
+      service credential without `ZohoCRM.modules.READ`, costs a nice-to-have instead of the
+      index — and `buildProjectIndex` catches it and reports `crmFailure` rather than aborting.
+      A project whose deal CRM does not return keeps its row. A `204` on a batch means "none
+      of these exist"; any other error is caught at the call site, because a systematically
+      broken CRM read must not quietly look like "no clients"
 - [~] 3.3 Fetch the user's last 60 days of logs to derive a recency score per project
       — **Not from Zoho: that read does not exist.** Both documented forms of the portal-wide
       range call return `6891 "Given URL is wrong"` (design §5, task 6.11). The verified
