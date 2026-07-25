@@ -10,18 +10,18 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
 - [~] 0.1 Pull the Stelic credential. **The vault returns metadata and token *hints* only**
       (`refresh_token_hint`, no client id or secret) — confirmed portal `911636649`, domain
       `https://www.zohoapis.com`, Books org `911636705`, scopes, and deploy capabilities.
-      The usable credential is the n8n credential `Stelic Credentials` (`81cg7LlsTQCWMht1`,
-      `oAuth2Api`). Do not register a new OAuth client — the app reads credentials from its
-      own environment (`design.md §7`), so the values have to reach Railway some other way.
-      **The refresh token cannot be copied out of n8n.** n8n ran the OAuth dance itself and
-      stored the result encrypted under its own `N8N_ENCRYPTION_KEY`; neither its UI nor its
-      API hands a refresh token back, by design. Only `client_id` and `client_secret` are
-      recoverable from it — they were typed in by hand.
-      So `ZOHO_SERVICE_REFRESH_TOKEN` must be **minted fresh against the same client**, which
-      `scripts/zoho-refresh-token.mjs` (`npm run zoho:token`) does in two steps. It must be
-      the same client as the user flow: `lib/config.ts` carries one `ZOHO_CLIENT_ID` /
+      The n8n credential `Stelic Credentials` (`81cg7LlsTQCWMht1`, `oAuth2Api`) is **not** the
+      credential this app uses — see 0.3, which supersedes the original "reuse the existing
+      client" instruction. n8n holds its own OAuth2 credential with its own redirect URI, and
+      **its refresh token cannot be copied out**: n8n ran the dance itself and stored the
+      result encrypted under its own `N8N_ENCRYPTION_KEY`, so neither its UI nor its API hands
+      a refresh token back, by design.
+      So `ZOHO_SERVICE_REFRESH_TOKEN` is **minted fresh against this app's own client**, which
+      `scripts/zoho-refresh-token.mjs` (`npm run zoho:token`) does in two steps. It must be the
+      same client as the user flow: `lib/config.ts` carries one `ZOHO_CLIENT_ID` /
       `ZOHO_CLIENT_SECRET` pair and both the service refresh and the user code exchange use
-      it, so a Zoho *Self Client* — which has its own id and secret — will not work here.
+      it, so a Zoho *Self Client* — its own id and secret, and no redirect URI at all — cannot
+      serve either half.
       Depends on 0.3: the redirect URI must be registered before the authorize step returns
       a code. Whoever signs in during that step is the identity the reads run as, so use an
       account with portal-wide visibility.
@@ -32,8 +32,21 @@ complete as you go. Stop and ask if a spec scenario is ambiguous.
       `portals.ALL` does not cover it. **Blocking follow-up: re-consent the token with
       `ZohoProjects.users.ALL` added and update the vault entry** — task group 2 cannot map an
       email to a portal user without it
-- [ ] 0.3 Add this app's redirect URI to the **existing** Stelic OAuth client (server-based
-      app — the vault entry shows a redirect URI already in use). No new client registration
+- [~] 0.3 **Superseded 2026-07-25: register a dedicated OAuth client after all.** This task
+      originally said to add a redirect URI to the *existing* Stelic client and register
+      nothing new. That reading was wrong about which credential n8n actually holds: n8n uses
+      its own generic OAuth2 credential pointed at its own callback, so there is no shared
+      API-console client to extend. (Zoho *does* allow several redirect URIs per client — the
+      `+` beside the field — so this is a choice, not a constraint.)
+      A dedicated client is the better choice regardless, and the reason to record: revocation
+      and audit become independent, so revoking n8n's access cannot break the app or the other
+      way round, and the consent asks only for the scopes this app needs rather than
+      inheriting n8n's.
+      Client Type `Server-based Applications`, name `Stelic Assistant`, homepage
+      `https://stelic-assistant-production.up.railway.app`, redirect URI
+      `https://stelic-assistant-production.up.railway.app/api/auth/callback` — which must match
+      `ZOHO_REDIRECT_URI` character for character, or Zoho answers `redirect_uri_mismatch`.
+      **Remaining:** create it, then feed its id and secret to 0.1
 - [ ] 0.4 Confirm open questions 2 and 9 in `proposal.md` (portal membership coverage,
       production domain)
 - [ ] 0.5 Provision the OpenRouter key (dedicated key for this app so spend is attributable),
