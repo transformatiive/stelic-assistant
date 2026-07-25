@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 import { ZohoClient } from '@/lib/zoho/client'
-import { PAGE_SIZE, _internal, listProjects, listTasks } from '@/lib/zoho/projects'
+import {
+  PROJECT_PAGE_SIZE,
+  TASK_PAGE_SIZE,
+  _internal,
+  listProjects,
+  listTasks,
+} from '@/lib/zoho/projects'
 import { fetchDealsByIds, readDeal } from '@/lib/zoho/crm'
 
 const { readProject, readTask } = _internal
@@ -123,7 +129,7 @@ describe('paging', () => {
   it('stops on a short page', async () => {
     const { client: c, fetchImpl } = client([
       {
-        projects: Array.from({ length: PAGE_SIZE }, (_, i) => ({
+        projects: Array.from({ length: PROJECT_PAGE_SIZE }, (_, i) => ({
           id_string: `p${i}`,
           name: `P${i}`,
         })),
@@ -131,14 +137,14 @@ describe('paging', () => {
       { projects: [{ id_string: 'last', name: 'Last' }] },
     ])
     const projects = await listProjects(c)
-    expect(projects).toHaveLength(PAGE_SIZE + 1)
+    expect(projects).toHaveLength(PROJECT_PAGE_SIZE + 1)
     expect(fetchImpl).toHaveBeenCalledTimes(2)
   })
 
   it('asks for a 1-based index, as Zoho expects', async () => {
     const { client: c, fetchImpl } = client([
       {
-        projects: Array.from({ length: PAGE_SIZE }, (_, i) => ({
+        projects: Array.from({ length: PROJECT_PAGE_SIZE }, (_, i) => ({
           id_string: `p${i}`,
           name: 'P',
         })),
@@ -147,7 +153,9 @@ describe('paging', () => {
     ])
     await listProjects(c)
     expect(String(fetchImpl.mock.calls[0]![0])).toContain('index=1')
-    expect(String(fetchImpl.mock.calls[1]![0])).toContain(`index=${PAGE_SIZE + 1}`)
+    expect(String(fetchImpl.mock.calls[1]![0])).toContain(
+      `index=${PROJECT_PAGE_SIZE + 1}`,
+    )
   })
 
   it('stops on an empty page without looping forever', async () => {
@@ -301,5 +309,39 @@ describe('custom fields, as the live portal actually returns them', () => {
     expect(
       readProject({ id_string: '1', name: 'P', custom_fields: [] })?.crmDealId,
     ).toBeUndefined()
+  })
+})
+
+// A live rebuild asked for range=200 on every project's tasks and got 400 on all 145,
+// indexing the whole portal with no charge codes. Design §5 records the verified calls as
+// range=200 for projects and range=100 for tasks; the difference was in the spec already.
+describe('page size differs per endpoint', () => {
+  it('asks projects for 200 and tasks for 100', async () => {
+    const { client: c, fetchImpl } = client([{ projects: [], tasks: [] }])
+    await listProjects(c)
+    await listTasks(c, 'p1')
+
+    expect(String(fetchImpl.mock.calls[0]![0])).toContain('range=200')
+    expect(String(fetchImpl.mock.calls[1]![0])).toContain('range=100')
+  })
+
+  it('pages tasks on the task size, not the project one', async () => {
+    const full = Array.from({ length: TASK_PAGE_SIZE }, (_, i) => ({
+      id_string: `t${i}`,
+      name: `T${i}`,
+    }))
+    const { client: c, fetchImpl } = client([
+      { tasks: full },
+      { tasks: [{ id_string: 'last', name: 'Last' }] },
+    ])
+
+    const tasks = await listTasks(c, 'p1')
+    expect(tasks).toHaveLength(TASK_PAGE_SIZE + 1)
+    expect(String(fetchImpl.mock.calls[1]![0])).toContain(`index=${TASK_PAGE_SIZE + 1}`)
+  })
+
+  it('keeps the two sizes distinct, so one cannot silently become the other', () => {
+    expect(PROJECT_PAGE_SIZE).toBe(200)
+    expect(TASK_PAGE_SIZE).toBe(100)
   })
 })

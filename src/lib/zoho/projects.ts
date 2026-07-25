@@ -12,8 +12,16 @@ import type { ZohoClient } from './client'
  * present, so that class of bug cannot reappear by accident.
  */
 
-/** Zoho caps a page well below this; 200 is what the spike used against 145 projects. */
-export const PAGE_SIZE = 200
+/**
+ * Page size, **per endpoint** — they do not agree, and getting it wrong is a silent 400.
+ *
+ * The projects endpoint accepts 200; the tasks endpoint does not. A live rebuild asked for
+ * `range=200` on every project's tasks and got `400` on all 145, indexing the whole portal
+ * with no charge codes at all. Design §5 records the verified calls as `range=200` for
+ * projects and `range=100` for tasks — the difference was in the spec and I did not honour it.
+ */
+export const PROJECT_PAGE_SIZE = 200
+export const TASK_PAGE_SIZE = 100
 
 /** A page loop has to end even if Zoho keeps answering. 50 pages is far past any real portal. */
 const MAX_PAGES = 50
@@ -155,13 +163,14 @@ async function readAllPages<T>(
   path: string,
   key: string,
   read: (raw: unknown) => T | null,
+  pageSize: number,
   extraQuery: Record<string, string | number> = {},
 ): Promise<T[]> {
   const out: T[] = []
 
   for (let page = 0; page < MAX_PAGES; page += 1) {
     const body = await client.requestJson<Record<string, unknown> | undefined>(path, {
-      query: { index: page * PAGE_SIZE + 1, range: PAGE_SIZE, ...extraQuery },
+      query: { index: page * pageSize + 1, range: pageSize, ...extraQuery },
     })
 
     const rows = body?.[key]
@@ -173,18 +182,24 @@ async function readAllPages<T>(
       if (item) out.push(item)
     }
 
-    if (rows.length < PAGE_SIZE) break
+    if (rows.length < pageSize) break
   }
 
   return out
 }
 
 export function listProjects(client: ZohoClient): Promise<ZohoProject[]> {
-  return readAllPages(client, 'projects/', 'projects', readProject)
+  return readAllPages(client, 'projects/', 'projects', readProject, PROJECT_PAGE_SIZE)
 }
 
 export function listTasks(client: ZohoClient, projectId: string): Promise<ZohoTask[]> {
-  return readAllPages(client, `projects/${projectId}/tasks/`, 'tasks', readTask)
+  return readAllPages(
+    client,
+    `projects/${projectId}/tasks/`,
+    'tasks',
+    readTask,
+    TASK_PAGE_SIZE,
+  )
 }
 
 /** Exported for the tests, which assert the id discipline directly. */
